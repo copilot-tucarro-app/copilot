@@ -1,0 +1,7 @@
+key	value	notes
+APP_NAME	COPILOT	Nombre comercial de la app
+APP_PUBLIC_URL	https://copilot-tucarro-app.github.io/copilot/	URL real de GitHub Pages
+DEFAULT_AGENT_PASSWORD	Copiloto123	Contraseña inicial para compradores registrados por agente
+OWNER_ACCESS_EMAIL	jrudas	Usuario dueño con módulo Agente de ventas
+OWNER_ACCESS_PASSWORD	Rudas2025*	Clave local configurada en la app
+APPS_SCRIPT_URL	https://script.google.com/macros/s/TU_DEPLOYMENT_ID/exec	Reemplazar por URL del despliegue Web App

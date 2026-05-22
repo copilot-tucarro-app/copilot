@@ -1,0 +1,6 @@
+id	municipio	direccion	velocidadMaxima	tipoCamara	imagenUrl	coordenadas	activo
+cam-1	Medellin	Av. Las Vegas con calle 10	60	Velocidad y semaforo	https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=900&q=80	6.2038,-75.5746	TRUE
+cam-2	Envigado	Carrera 43A, sector Ayura	50	Velocidad	https://images.unsplash.com/photo-1493238792000-8113da705763?auto=format&fit=crop&w=900&q=80	6.1749,-75.5917	TRUE
+cam-3	Itagui	Autopista Sur, entrada Ditaires	60	Velocidad	https://images.unsplash.com/photo-1469854523086-cc02fe5d8800?auto=format&fit=crop&w=900&q=80	6.1719,-75.6112	TRUE
+cam-4	Sabaneta	Avenida Regional, sector Mayorca	60	Semaforo	https://images.unsplash.com/photo-1500534314209-a25ddb2bd429?auto=format&fit=crop&w=900&q=80	6.1513,-75.6153	TRUE
+cam-5	Bello	Diagonal 55 con carrera 50	50	Velocidad y carril	https://images.unsplash.com/photo-1492144534655-ae79c964c9d7?auto=format&fit=crop&w=900&q=80	6.3373,-75.5580	TRUE
