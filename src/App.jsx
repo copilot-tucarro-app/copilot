@@ -8,6 +8,7 @@ import PhotoFines from "./screens/PhotoFines";
 import SalesAgent from "./screens/SalesAgent";
 import TransitCode from "./screens/TransitCode";
 import Vehicle from "./screens/Vehicle";
+import InstallAppPrompt from "./components/InstallAppPrompt";
 import { isSalesAgentEnabled } from "./utils/auth";
 import { clearStoredUser, getStoredUser } from "./utils/storage";
 
@@ -41,11 +42,21 @@ export default function App() {
   }
 
   if (activeScreen === "agent" && isSalesAgentEnabled(user)) {
-    return <SalesAgent onBack={closeAgent} />;
+    return (
+      <>
+        <SalesAgent onBack={closeAgent} />
+        <InstallAppPrompt />
+      </>
+    );
   }
 
   if (!user) {
-    return <Login onLogin={setUser} />;
+    return (
+      <>
+        <Login onLogin={setUser} />
+        <InstallAppPrompt />
+      </>
+    );
   }
 
   const ActiveScreen = screens[activeScreen] || Home;
@@ -53,6 +64,7 @@ export default function App() {
   return (
     <>
       <ActiveScreen user={user} onLogout={logout} onNavigate={setActiveScreen} onOpenAgent={openAgent} canUseSalesAgent={isSalesAgentEnabled(user)} />
+      <InstallAppPrompt withBottomNav />
       <BottomNav activeScreen={activeScreen} onChange={setActiveScreen} />
     </>
   );

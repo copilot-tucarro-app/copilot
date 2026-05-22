@@ -1,9 +1,10 @@
 {
   "name": "COPILOT",
   "short_name": "COPILOT",
+  "id": "/copilot/",
   "description": "COPILOT, asistente inteligente para conductores en Colombia.",
-  "start_url": "./",
-  "scope": "./",
+  "start_url": "/copilot/",
+  "scope": "/copilot/",
   "display": "standalone",
   "background_color": "#f8fafc",
   "theme_color": "#0f172a",
@@ -13,13 +14,13 @@
       "src": "./copilot-icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
-      "purpose": "any"
+      "purpose": "any maskable"
     },
     {
       "src": "./copilot-icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any"
+      "purpose": "any maskable"
     }
   ]
 }
