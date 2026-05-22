@@ -1,4 +1,4 @@
-import { Download, Share2, Smartphone, X } from "lucide-react";
+import { Download, Smartphone, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
 function isInstalledApp() {
@@ -75,7 +75,7 @@ export default function InstallAppPrompt({ withBottomNav = false }) {
 
   const promptTitle = isAppleMobile ? "Instala COPILOT en tu iPhone" : "Instala COPILOT en tu celular";
   const promptMessage = isAppleMobile
-    ? "Toca Compartir y luego Agregar a pantalla de inicio."
+    ? "Usa el boton Compartir del navegador y elige Agregar a pantalla de inicio."
     : deferredPrompt
       ? "Accede mas rapido desde la pantalla de inicio."
       : "Abre el menu de Chrome y toca Instalar app.";
@@ -109,14 +109,6 @@ export default function InstallAppPrompt({ withBottomNav = false }) {
             >
               <Download size={19} />
             </button>
-          ) : isAppleMobile ? (
-            <div
-              className="grid size-11 place-items-center rounded-2xl bg-blue-50 text-blue-600 ring-1 ring-blue-100"
-              aria-hidden="true"
-              title="Usa el boton Compartir"
-            >
-              <Share2 size={19} />
-            </div>
           ) : null}
           <button
             type="button"
