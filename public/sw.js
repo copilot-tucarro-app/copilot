@@ -1,4 +1,4 @@
-const CACHE_NAME = "copilot-v4";
+const CACHE_NAME = "copilot-v5";
 const APP_SHELL = ["./", "./manifest.webmanifest", "./copilot-icon-192.png", "./copilot-icon-512.png", "./favicon.png", "./apple-touch-icon.png"];
 
 self.addEventListener("install", (event) => {
