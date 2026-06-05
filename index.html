@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#0f172a" />
+    <meta name="theme-color" content="#020617" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="copilot360" />
@@ -12,18 +12,58 @@
       name="description"
       content="copilot360 ayuda a conductores en Colombia a controlar vencimientos, mantenimientos, gasolina, fotomultas y pico y placa."
     />
-    <link rel="icon" type="image/png" href="./favicon.png" />
-    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
-    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" type="image/png" href="./favicon.png?v=20260605-copilot360" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png?v=20260605-copilot360" />
+    <link rel="manifest" href="./manifest.webmanifest?v=20260605-copilot360" />
     <link rel="preconnect" href="https://api.mapbox.com" />
     <link rel="preconnect" href="https://events.mapbox.com" />
     <link rel="dns-prefetch" href="https://api.mapbox.com" />
     <link rel="dns-prefetch" href="https://events.mapbox.com" />
     <title>copilot360</title>
-    <script type="module" crossorigin src="/copilot/assets/index-DlNlgRXI.js"></script>
+    <script>
+      window.__COPILOT_BOOT_SPLASH_STARTED_AT = performance.now();
+    </script>
+    <style>
+      #boot-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: grid;
+        place-items: center;
+        min-width: 320px;
+        background: #020617;
+        opacity: 1;
+        visibility: visible;
+        transition:
+          opacity 180ms ease,
+          visibility 180ms ease;
+      }
+
+      #boot-splash.boot-splash-hide {
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+      }
+
+      #boot-splash img {
+        width: min(66vw, 15rem);
+        height: auto;
+        display: block;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        #boot-splash {
+          transition: none;
+        }
+      }
+    </style>
+    <script type="module" crossorigin src="/copilot/assets/index-CAT7FLo_.js"></script>
     <link rel="stylesheet" crossorigin href="/copilot/assets/index-upmJ5yDP.css">
   </head>
   <body>
+    <div id="boot-splash" aria-label="Cargando copilot360" role="status">
+      <img src="./copilot360-logo.png?v=20260605-copilot360" alt="copilot360" />
+    </div>
     <div id="root"></div>
   </body>
 </html>

@@ -1,5 +1,15 @@
-const CACHE_NAME = "copilot360-v1";
-const APP_SHELL = ["./", "./manifest.webmanifest", "./copilot-icon-192.png", "./copilot-icon-512.png", "./favicon.png", "./apple-touch-icon.png", "./copilot360-logo.png"];
+const ASSET_VERSION = "20260605-copilot360";
+const CACHE_NAME = `copilot360-v2-${ASSET_VERSION}`;
+const withVersion = (url) => `${url}?v=${ASSET_VERSION}`;
+const APP_SHELL = [
+  "./",
+  withVersion("./manifest.webmanifest"),
+  withVersion("./copilot-icon-192.png"),
+  withVersion("./copilot-icon-512.png"),
+  withVersion("./favicon.png"),
+  withVersion("./apple-touch-icon.png"),
+  withVersion("./copilot360-logo.png"),
+];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -15,6 +25,12 @@ self.addEventListener("activate", (event) => {
       .then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key)))),
   );
   self.clients.claim();
+});
+
+self.addEventListener("message", (event) => {
+  if (event.data?.type === "SKIP_WAITING") {
+    self.skipWaiting();
+  }
 });
 
 self.addEventListener("fetch", (event) => {
@@ -53,8 +69,8 @@ self.addEventListener("push", (event) => {
   const title = payload.title || "copilot360";
   const options = {
     body: payload.body || "Tienes una alerta pendiente en copilot360.",
-    icon: payload.icon || "./copilot-icon-192.png",
-    badge: payload.badge || "./copilot-icon-192.png",
+    icon: payload.icon || withVersion("./copilot-icon-192.png"),
+    badge: payload.badge || withVersion("./copilot-icon-192.png"),
     tag: payload.tag || "copilot-push",
     renotify: Boolean(payload.renotify),
     requireInteraction: Boolean(payload.requireInteraction),
