@@ -1,5 +1,5 @@
-const ASSET_VERSION = "20260605-copilot360-reinstallprompt";
-const CACHE_NAME = `copilot360-v5-${ASSET_VERSION}`;
+const ASSET_VERSION = "20260605-copilot360-iphoneinstructions";
+const CACHE_NAME = `copilot360-v6-${ASSET_VERSION}`;
 const withVersion = (url) => `${url}?v=${ASSET_VERSION}`;
 const APP_SHELL = [
   "./",
