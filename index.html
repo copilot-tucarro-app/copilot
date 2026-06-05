@@ -45,24 +45,51 @@
         pointer-events: none;
       }
 
+      #boot-splash .boot-splash-content {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 1.35rem;
+      }
+
       #boot-splash img {
         width: min(66vw, 15rem);
         height: auto;
         display: block;
       }
 
+      #boot-splash .boot-splash-spinner {
+        width: 2rem;
+        height: 2rem;
+        border: 0.2rem solid rgba(255, 255, 255, 0.28);
+        border-top-color: #ffffff;
+        border-radius: 9999px;
+        animation: boot-splash-spin 760ms linear infinite;
+      }
+
+      @keyframes boot-splash-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
       @media (prefers-reduced-motion: reduce) {
-        #boot-splash {
+        #boot-splash,
+        #boot-splash .boot-splash-spinner {
           transition: none;
+          animation: none;
         }
       }
     </style>
-    <script type="module" crossorigin src="/copilot/assets/index-CAT7FLo_.js"></script>
-    <link rel="stylesheet" crossorigin href="/copilot/assets/index-upmJ5yDP.css">
+    <script type="module" crossorigin src="/copilot/assets/index-CpZVLtjO.js"></script>
+    <link rel="stylesheet" crossorigin href="/copilot/assets/index-HKhXUxb5.css">
   </head>
   <body>
     <div id="boot-splash" aria-label="Cargando copilot360" role="status">
-      <img src="./copilot360-logo.png?v=20260605-copilot360" alt="copilot360" />
+      <div class="boot-splash-content">
+        <img src="./copilot360-logo.png?v=20260605-copilot360" alt="copilot360" />
+        <div class="boot-splash-spinner" aria-hidden="true"></div>
+      </div>
     </div>
     <div id="root"></div>
   </body>
