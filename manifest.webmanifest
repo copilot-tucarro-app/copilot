@@ -1,8 +1,8 @@
 {
-  "name": "COPILOT",
-  "short_name": "COPILOT",
+  "name": "copilot360",
+  "short_name": "copilot360",
   "id": "/copilot/",
-  "description": "COPILOT, asistente inteligente para conductores en Colombia.",
+  "description": "copilot360, asistente inteligente para conductores en Colombia.",
   "start_url": "/copilot/",
   "scope": "/copilot/",
   "display": "standalone",

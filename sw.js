@@ -1,5 +1,5 @@
-const CACHE_NAME = "copilot-v8";
-const APP_SHELL = ["./", "./manifest.webmanifest", "./copilot-icon-192.png", "./copilot-icon-512.png", "./favicon.png", "./apple-touch-icon.png"];
+const CACHE_NAME = "copilot360-v1";
+const APP_SHELL = ["./", "./manifest.webmanifest", "./copilot-icon-192.png", "./copilot-icon-512.png", "./favicon.png", "./apple-touch-icon.png", "./copilot360-logo.png"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -50,9 +50,9 @@ self.addEventListener("fetch", (event) => {
 
 self.addEventListener("push", (event) => {
   const payload = readPushPayload(event);
-  const title = payload.title || "COPILOT";
+  const title = payload.title || "copilot360";
   const options = {
-    body: payload.body || "Tienes una alerta pendiente en COPILOT.",
+    body: payload.body || "Tienes una alerta pendiente en copilot360.",
     icon: payload.icon || "./copilot-icon-192.png",
     badge: payload.badge || "./copilot-icon-192.png",
     tag: payload.tag || "copilot-push",
