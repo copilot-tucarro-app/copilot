@@ -1,5 +1,5 @@
-const ASSET_VERSION = "20260605-copilot360-versiongate";
-const CACHE_NAME = `copilot360-v3-${ASSET_VERSION}`;
+const ASSET_VERSION = "20260605-copilot360-installprompt";
+const CACHE_NAME = `copilot360-v4-${ASSET_VERSION}`;
 const withVersion = (url) => `${url}?v=${ASSET_VERSION}`;
 const APP_SHELL = [
   "./",
