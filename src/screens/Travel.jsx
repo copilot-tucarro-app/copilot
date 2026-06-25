@@ -18,7 +18,6 @@ import {
   Square,
   Volume2,
   VolumeX,
-  WalletCards,
   X,
 } from "lucide-react";
 import { forwardRef, useEffect, useMemo, useRef, useState } from "react";
@@ -29,12 +28,6 @@ import { checkPicoPlaca, getCachedPicoPlacaRulesPayload } from "../services/pico
 import { getRouteWeatherSummary } from "../services/weather";
 import { getVehicle } from "../utils/storage";
 import { polishSpanishText } from "../utils/textUtils";
-
-const formatCurrency = new Intl.NumberFormat("es-CO", {
-  style: "currency",
-  currency: "COP",
-  maximumFractionDigits: 0,
-});
 
 const formatNumber = new Intl.NumberFormat("es-CO", {
   maximumFractionDigits: 1,
@@ -101,8 +94,6 @@ export default function Travel({ user, onLogout }) {
   const [statusMessage, setStatusMessage] = useState("");
   const [routes, setRoutes] = useState([]);
   const [selectedRouteId, setSelectedRouteId] = useState("");
-  const [priceGallon, setPriceGallon] = useState("16000");
-  const [autonomy, setAutonomy] = useState(vehicle?.autonomyPerGallon || "38");
   const [mapboxToken, setMapboxToken] = useState("");
   const [isMapboxConfigLoading, setIsMapboxConfigLoading] = useState(true);
   const [isMapEngineLoading, setIsMapEngineLoading] = useState(false);
@@ -114,6 +105,7 @@ export default function Travel({ user, onLogout }) {
   const [navigationViewOpen, setNavigationViewOpen] = useState(false);
   const [routePanelMinimized, setRoutePanelMinimized] = useState(false);
   const [routeEditorOpen, setRouteEditorOpen] = useState(true);
+  const [originEditorOpen, setOriginEditorOpen] = useState(false);
   const [mapSettingsOpen, setMapSettingsOpen] = useState(false);
   const [picoPlacaState, setPicoPlacaState] = useState({ status: "idle", result: null });
   const [picoWarningOpen, setPicoWarningOpen] = useState(false);
@@ -149,10 +141,6 @@ export default function Travel({ user, onLogout }) {
       isActive = false;
     };
   }, []);
-
-  useEffect(() => {
-    setAutonomy((current) => current || vehicle?.autonomyPerGallon || "38");
-  }, [vehicle?.autonomyPerGallon]);
 
   useEffect(() => {
     let isActive = true;
@@ -476,6 +464,7 @@ export default function Travel({ user, onLogout }) {
     setOrigin(resolvedPlace);
     setOriginQuery(resolvedPlace.label);
     setOriginSuggestions([]);
+    setOriginEditorOpen(false);
     originSearchSessionRef.current = createMapboxSessionToken();
     resetRoutes();
     focusMap(resolvedPlace);
@@ -492,6 +481,25 @@ export default function Travel({ user, onLogout }) {
     resetRoutes();
     focusMap(resolvedPlace);
     setStatusMessage(hasCoordinates(resolvedPlace) ? "Destino seleccionado." : "No pudimos obtener coordenadas para ese destino.");
+  }
+
+  function clearOrigin() {
+    setOrigin(null);
+    setOriginQuery("");
+    setOriginSuggestions([]);
+    setOriginEditorOpen(true);
+    originSearchSessionRef.current = createMapboxSessionToken();
+    resetRoutes();
+    setStatusMessage("Origen borrado. Puedes detectarlo o escribirlo.");
+  }
+
+  function clearDestination() {
+    setDestination(null);
+    setDestinationQuery("");
+    setDestinationSuggestions([]);
+    destinationSearchSessionRef.current = createMapboxSessionToken();
+    resetRoutes();
+    setStatusMessage("Destino borrado.");
   }
 
   async function resolvePlaceSelection(place) {
@@ -554,6 +562,7 @@ export default function Travel({ user, onLogout }) {
         setOrigin(detectedPlace);
         setOriginQuery(detectedPlace.label);
         setOriginSuggestions([]);
+        setOriginEditorOpen(false);
         setStatusMessage(message);
         resetRoutes();
         focusMap(detectedPlace);
@@ -568,6 +577,7 @@ export default function Travel({ user, onLogout }) {
 
         setOrigin(detectedPlace);
         setOriginQuery(detectedPlace.label);
+        setOriginEditorOpen(false);
         setStatusMessage(message);
         resetRoutes();
         focusMap(detectedPlace);
@@ -1173,8 +1183,6 @@ export default function Travel({ user, onLogout }) {
                 selectedRouteId={selectedRouteId}
                 bestTrafficRouteId={bestTrafficRouteId}
                 routeWeather={routeWeather}
-                setAutonomy={setAutonomy}
-                setPriceGallon={setPriceGallon}
                 originQuery={originQuery}
                 destinationQuery={destinationQuery}
                 originSuggestions={originSuggestions}
@@ -1184,14 +1192,17 @@ export default function Travel({ user, onLogout }) {
                 isLocating={isLocating}
                 isRouting={isRouting}
                 mapboxReady={mapboxReady}
-                priceGallon={priceGallon}
-                autonomy={autonomy}
                 routeEditorOpen={routeEditorOpen}
+                originEditorOpen={originEditorOpen}
+                hasOrigin={hasCoordinates(origin)}
                 canCalculateRoutes={canCalculateRoutes}
                 canStartNavigation={canStartNavigation}
                 onCalculateRoutes={calculateRoutes}
                 onEditRoute={() => setRouteEditorOpen(true)}
                 onDetectLocation={() => detectCurrentLocation()}
+                onToggleOriginEditor={() => setOriginEditorOpen((current) => !current)}
+                onClearOrigin={clearOrigin}
+                onClearDestination={clearDestination}
                 onOriginChange={updateOriginQuery}
                 onDestinationChange={updateDestinationQuery}
                 onOriginSelect={selectOrigin}
@@ -1375,10 +1386,6 @@ function TravelBottomSheet({
   selectedRouteId,
   bestTrafficRouteId,
   routeWeather,
-  setAutonomy,
-  setPriceGallon,
-  priceGallon,
-  autonomy,
   originQuery,
   destinationQuery,
   originSuggestions,
@@ -1389,11 +1396,16 @@ function TravelBottomSheet({
   isRouting,
   mapboxReady,
   routeEditorOpen,
+  originEditorOpen,
+  hasOrigin,
   canCalculateRoutes,
   canStartNavigation,
   onCalculateRoutes,
   onEditRoute,
   onDetectLocation,
+  onToggleOriginEditor,
+  onClearOrigin,
+  onClearDestination,
   onOriginChange,
   onDestinationChange,
   onOriginSelect,
@@ -1427,8 +1439,6 @@ function TravelBottomSheet({
                       routeItem={routeItem}
                       active={selectedRouteId === routeItem.id}
                       bestTraffic={routeItem.id === bestTrafficRouteId}
-                      priceGallon={priceGallon}
-                      autonomy={autonomy}
                       weather={routeWeather[routeItem.id]}
                       onSelect={() => onRouteSelect(routeItem.id)}
                     />
@@ -1448,7 +1458,7 @@ function TravelBottomSheet({
             </div>
             {!showEditor ? (
               <button type="button" onClick={onEditRoute} className="mt-2 w-full rounded-xl bg-white px-3 py-2 text-xs font-black text-black ring-1 ring-slate-200 transition hover:bg-slate-50">
-                Editar origen, destino y consumo
+                Editar destino
               </button>
             ) : null}
           </div>
@@ -1456,54 +1466,90 @@ function TravelBottomSheet({
 
         {showEditor ? (
         <div className="grid gap-1.5 rounded-[1.15rem] bg-white/90 p-2 ring-1 ring-slate-100">
-          <PlaceField
-            label="Origen"
-            value={originQuery}
-            placeholder="Detectar o escribir origen"
-            icon={LocateFixed}
-            disabled={!mapboxReady}
-            isLoading={isSearchingOrigin}
-            suggestions={originSuggestions}
-            onChange={onOriginChange}
-            onSelect={onOriginSelect}
-            suggestionsPlacement="top"
-            compact
-            action={
-              <button
-                type="button"
-                onClick={onDetectLocation}
-                disabled={!mapboxReady || isLocating}
-                className="grid size-10 shrink-0 place-items-center rounded-xl bg-black text-white transition hover:bg-neutral-900 disabled:bg-slate-300"
-                aria-label="Detectar origen"
-                title="Detectar origen"
-              >
-                {isLocating ? <Loader2 className="animate-spin" size={18} /> : <Navigation size={18} />}
-              </button>
-            }
-          />
+          {originEditorOpen ? (
+            <PlaceField
+              label="Origen"
+              value={originQuery}
+              placeholder="Ubicacion actual o escribir origen"
+              icon={LocateFixed}
+              disabled={!mapboxReady}
+              isLoading={isSearchingOrigin}
+              suggestions={originSuggestions}
+              onChange={onOriginChange}
+              onSelect={onOriginSelect}
+              onClear={onClearOrigin}
+              suggestionsPlacement="top"
+              compact
+              action={
+                <>
+                  <button
+                    type="button"
+                    onClick={onDetectLocation}
+                    disabled={!mapboxReady || isLocating}
+                    className="grid size-10 shrink-0 place-items-center rounded-xl bg-black text-white transition hover:bg-neutral-900 disabled:bg-slate-300"
+                    aria-label="Detectar origen"
+                    title="Detectar origen"
+                  >
+                    {isLocating ? <Loader2 className="animate-spin" size={18} /> : <Navigation size={18} />}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onToggleOriginEditor}
+                    className="grid size-10 shrink-0 place-items-center rounded-xl bg-slate-100 text-slate-700 ring-1 ring-slate-200 transition hover:bg-slate-200"
+                    aria-label="Ocultar origen"
+                    title="Ocultar origen"
+                  >
+                    <X size={17} />
+                  </button>
+                </>
+              }
+            />
+          ) : null}
 
-          <PlaceField
-            label="Destino"
-            value={destinationQuery}
-            placeholder="Buscar destino"
-            icon={Search}
-            disabled={!mapboxReady}
-            isLoading={isSearchingDestination}
-            suggestions={destinationSuggestions}
-            onChange={onDestinationChange}
-            onSelect={onDestinationSelect}
-            suggestionsPlacement="top"
-            compact
-          />
+          <div className="grid grid-cols-[auto_1fr_auto] gap-1.5">
+            <button
+              type="button"
+              onClick={onToggleOriginEditor}
+              disabled={!mapboxReady}
+              className={`grid size-10 self-end place-items-center rounded-xl ring-1 transition disabled:bg-slate-100 disabled:text-slate-300 ${hasOrigin ? "bg-emerald-50 text-emerald-700 ring-emerald-100 hover:bg-emerald-100" : "bg-amber-50 text-amber-700 ring-amber-100 hover:bg-amber-100"}`}
+              aria-label="Editar origen"
+              title={hasOrigin ? "Editar origen" : "Agregar origen"}
+            >
+              <LocateFixed size={18} />
+            </button>
 
-          <div className="grid grid-cols-[1fr_1fr_auto] gap-1.5">
-            <NumberField label="Precio galon" value={priceGallon} onChange={setPriceGallon} compact />
-            <NumberField label="Km/galon" value={autonomy} onChange={setAutonomy} compact />
+            <PlaceField
+              label="Destino"
+              value={destinationQuery}
+              placeholder="Buscar destino"
+              icon={Search}
+              disabled={!mapboxReady}
+              isLoading={isSearchingDestination}
+              suggestions={destinationSuggestions}
+              onChange={onDestinationChange}
+              onSelect={onDestinationSelect}
+              onClear={onClearDestination}
+              suggestionsPlacement="top"
+              compact
+            />
+
             <button type="button" onClick={onCalculateRoutes} disabled={!canCalculateRoutes} className="primary-button min-h-10 self-end rounded-xl px-3 py-2 text-xs sm:px-4">
               {isRouting ? <Loader2 className="animate-spin" size={18} /> : <Route size={18} />}
               <span className="hidden min-[390px]:inline">Calcular</span>
             </button>
           </div>
+
+          {!hasOrigin && !originEditorOpen ? (
+            <button
+              type="button"
+              onClick={onDetectLocation}
+              disabled={!mapboxReady || isLocating}
+              className="flex min-h-9 items-center justify-center gap-2 rounded-xl bg-slate-100 px-3 text-xs font-black text-slate-700 ring-1 ring-slate-200 transition hover:bg-slate-200 disabled:text-slate-400"
+            >
+              {isLocating ? <Loader2 className="animate-spin" size={15} /> : <LocateFixed size={15} />}
+              Usar ubicacion actual
+            </button>
+          ) : null}
         </div>
         ) : null}
       </div>
@@ -1511,8 +1557,8 @@ function TravelBottomSheet({
   );
 }
 
-function RouteMiniOption({ routeItem, active, bestTraffic, priceGallon, autonomy, weather, onSelect }) {
-  const metrics = getRouteMetrics(routeItem, priceGallon, autonomy);
+function RouteMiniOption({ routeItem, active, bestTraffic, weather, onSelect }) {
+  const distanceKm = Number(routeItem?.distanceMeters || 0) / 1000;
   const activeStyles = active ? "border-slate-300 bg-white text-slate-950 shadow-sm ring-1 ring-slate-200" : "border-slate-100 bg-white/80 text-slate-800";
 
   return (
@@ -1526,18 +1572,14 @@ function RouteMiniOption({ routeItem, active, bestTraffic, priceGallon, autonomy
           <p className="truncate text-[0.6rem] font-bold text-slate-500">{bestTraffic ? "Menor trafico" : active ? "Seleccionada" : "Alternativa"}</p>
         </div>
       </div>
-      <div className="grid grid-cols-3 gap-1 text-[0.61rem] font-black text-slate-600">
+      <div className="grid grid-cols-2 gap-1 text-[0.61rem] font-black text-slate-600">
         <span className="inline-flex min-w-0 items-center gap-1">
           <Clock3 size={11} />
           <span className="truncate">{formatDuration(routeItem.durationSeconds)}</span>
         </span>
         <span className="inline-flex min-w-0 items-center gap-1">
           <Gauge size={11} />
-          <span className="truncate">{formatNumber.format(metrics.km)} km</span>
-        </span>
-        <span className="inline-flex min-w-0 items-center gap-1 text-slate-950">
-          <WalletCards size={11} />
-          <span className="truncate">{formatCurrency.format(metrics.cost)}</span>
+          <span className="truncate">{formatNumber.format(distanceKm)} km</span>
         </span>
       </div>
       <RouteWeatherBadge weather={weather} />
@@ -1759,11 +1801,13 @@ const ActiveNavigationCard = forwardRef(function ActiveNavigationCard({ snapshot
   );
 });
 
-function PlaceField({ label, value, placeholder, icon: Icon, disabled, isLoading, suggestions, onChange, onSelect, action, compact = false, suggestionsPlacement = "bottom" }) {
+function PlaceField({ label, value, placeholder, icon: Icon, disabled, isLoading, suggestions, onChange, onSelect, onClear, action, compact = false, suggestionsPlacement = "bottom" }) {
   const suggestionsClass =
     suggestionsPlacement === "top"
       ? "absolute inset-x-0 bottom-full z-40 mb-2 max-h-72 overflow-y-auto rounded-2xl bg-white shadow-xl ring-1 ring-slate-200"
       : "absolute inset-x-0 top-full z-40 mt-2 max-h-80 overflow-y-auto rounded-2xl bg-white shadow-xl ring-1 ring-slate-200";
+  const hasValue = String(value || "").trim().length > 0;
+  const inputPaddingClass = isLoading && onClear && hasValue ? "pr-16" : onClear && hasValue ? "pr-10" : isLoading ? "pr-9" : "pr-3";
 
   return (
     <div className="relative">
@@ -1772,8 +1816,19 @@ function PlaceField({ label, value, placeholder, icon: Icon, disabled, isLoading
         <div className="flex gap-2">
           <div className="relative min-w-0 flex-1">
             <Icon className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-            <input className={compact ? "input min-h-10 rounded-xl py-2 pl-9 pr-3 text-xs" : "input pl-10"} value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} disabled={disabled} />
-            {isLoading ? <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 animate-spin text-slate-400" size={18} /> : null}
+            <input className={compact ? `input min-h-10 rounded-xl py-2 pl-9 text-xs ${inputPaddingClass}` : `input pl-10 ${inputPaddingClass}`} value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} disabled={disabled} />
+            {onClear && hasValue ? (
+              <button
+                type="button"
+                onClick={onClear}
+                className="absolute right-2 top-1/2 grid size-6 -translate-y-1/2 place-items-center rounded-full bg-slate-100 text-slate-500 transition hover:bg-slate-200 hover:text-slate-900"
+                aria-label={`Borrar ${label.toLowerCase()}`}
+                title={`Borrar ${label.toLowerCase()}`}
+              >
+                <X size={14} />
+              </button>
+            ) : null}
+            {isLoading ? <Loader2 className={`absolute top-1/2 -translate-y-1/2 animate-spin text-slate-400 ${onClear && hasValue ? "right-10" : "right-3"}`} size={18} /> : null}
           </div>
           {action}
         </div>
@@ -1820,15 +1875,6 @@ function getPlaceBadges(place) {
     place?.neighborhood || place?.city || "",
     place?.category || place?.typeLabel || "",
   ].filter(Boolean).slice(0, 3);
-}
-
-function NumberField({ label, value, onChange, compact = false }) {
-  return (
-    <label className="block">
-      <span className={compact ? "mb-1 block text-[0.65rem] font-black uppercase tracking-wide text-slate-500" : "label mb-1 block"}>{label}</span>
-      <input className={compact ? "input min-h-10 rounded-xl px-3 py-2 text-xs" : "input"} value={value} onChange={(event) => onChange(event.target.value)} inputMode="decimal" placeholder="0" />
-    </label>
-  );
 }
 
 function getDefaultCenter(vehicle, user) {
@@ -1884,32 +1930,6 @@ function getTrafficDelay(routeItem) {
     return Math.max(0, routeItem.durationSeconds - routeItem.durationTypicalSeconds);
   }
   return Math.max(0, routeItem.trafficScore * 60);
-}
-
-function getRouteMetrics(routeItem, priceGallon, autonomy) {
-  const km = Number(routeItem?.distanceMeters || 0) / 1000;
-  const cleanAutonomy = parseNumber(autonomy);
-  const cleanPrice = parseNumber(priceGallon);
-  const gallons = cleanAutonomy ? km / cleanAutonomy : 0;
-
-  return {
-    km,
-    gallons,
-    cost: gallons * cleanPrice,
-    costPerKm: cleanAutonomy ? cleanPrice / cleanAutonomy : 0,
-  };
-}
-
-function parseNumber(value) {
-  const text = String(value || "").replace(/[^\d,.-]/g, "");
-  if (!text) return 0;
-  if (text.includes(",")) {
-    return Number(text.replace(/\./g, "").replace(",", ".")) || 0;
-  }
-  if (/^\d{1,3}(\.\d{3})+$/.test(text)) {
-    return Number(text.replace(/\./g, "")) || 0;
-  }
-  return Number(text) || 0;
 }
 
 function hasCoordinates(value) {
