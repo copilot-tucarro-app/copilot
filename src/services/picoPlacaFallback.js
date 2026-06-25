@@ -6,7 +6,7 @@ function buildWeekRules({
   horarioInicio = "06:00",
   horarioFin = "20:00",
   schedule,
-  nota = "Fallback local editable. Actualiza Google Sheets para usar reglas oficiales.",
+  nota = "Regla local vigente.",
 }) {
   return Object.entries(schedule).map(([diaSemana, digitosRestriccion]) => ({
     ciudad,
@@ -22,7 +22,7 @@ function buildWeekRules({
     fechaInicio: "",
     fechaFin: "",
     nota,
-    fuenteOficial: "Fallback local de COPILOT",
+    fuenteOficial: "Fallback local de copilot360",
     urlFuente: "",
   }));
 }
@@ -47,12 +47,12 @@ function buildNoRestrictionRule({
     fechaInicio: "",
     fechaFin: "",
     nota,
-    fuenteOficial: "Fallback local de COPILOT",
+    fuenteOficial: "Fallback local de copilot360",
     urlFuente: "",
   };
 }
 
-// Mantiene la PWA operativa offline. Google Sheets debe ser la fuente viva.
+// Mantiene la PWA operativa offline.
 export const picoPlacaFallbackRules = [
   ...buildWeekRules({
     ciudad: "Bogota",

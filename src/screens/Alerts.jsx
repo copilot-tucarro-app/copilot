@@ -1,6 +1,7 @@
 import { AlertTriangle, BellRing, CalendarCheck2, Gauge, ShieldCheck } from "lucide-react";
 import Card from "../components/Card";
 import Header from "../components/Header";
+import NotificationSettingsCard from "../components/NotificationSettingsCard";
 import StatusBadge from "../components/StatusBadge";
 import UpToDateMedal from "../components/UpToDateMedal";
 import { APP_NAME } from "../config/appConfig";
@@ -33,6 +34,8 @@ export default function Alerts({ user, onLogout }) {
         subtitle="Documentos, mantenimientos y movilidad para hoy."
         action={vehicleIsUpToDate ? <UpToDateMedal vehicleLabel={vehicle?.plate || "Vehiculo principal"} /> : null}
       />
+
+      <NotificationSettingsCard user={user} />
 
       {!vehicle ? (
         <Card className="p-6 text-center">

@@ -91,7 +91,7 @@ async function fetchFromAppsScript(action, params = {}) {
   const text = await response.text();
 
   if (!response.ok) {
-    throw new Error("Google Sheets no respondio correctamente.");
+    throw new Error("El servicio no respondio correctamente.");
   }
 
   return JSON.parse(text);
@@ -111,7 +111,7 @@ function readWithJsonp(action, params = {}, options = {}) {
     const script = document.createElement("script");
     const timeout = window.setTimeout(() => {
       cleanup();
-      reject(new Error("No se recibio respuesta de Google Sheets."));
+      reject(new Error("No se recibio respuesta del servicio."));
     }, timeoutMs);
 
     function cleanup() {
@@ -129,12 +129,24 @@ function readWithJsonp(action, params = {}, options = {}) {
     script.referrerPolicy = "no-referrer";
     script.onerror = () => {
       cleanup();
-      reject(new Error("No se pudo conectar con Google Sheets."));
+      reject(new Error("No se pudo conectar con el servicio."));
     };
 
     script.src = `${APPS_SCRIPT_URL}?${query.toString()}`;
     document.head.appendChild(script);
   });
+}
+
+function callJsonpAppsScript(action, params = {}, options = {}) {
+  if (!isAppsScriptConfigured()) {
+    return Promise.resolve({
+      ok: true,
+      message: "Google Apps Script no esta configurado.",
+      simulated: true,
+    });
+  }
+
+  return readWithJsonp(action, params, options);
 }
 
 async function sendToAppsScript(action, data) {
@@ -178,6 +190,22 @@ export async function registerBuyerFromAgent(buyer) {
 
 export async function validateLogin(identifier, password) {
   return readFromAppsScript("validateLogin", { identifier, password }, { cache: false });
+}
+
+export async function requestPasswordReset(email) {
+  return callJsonpAppsScript("requestPasswordReset", { email: normalizeEmail(email) }, { timeoutMs: 12000 });
+}
+
+export async function resetPasswordWithCode(email, code, password) {
+  return callJsonpAppsScript(
+    "resetPassword",
+    {
+      email: normalizeEmail(email),
+      code: String(code || "").trim(),
+      password,
+    },
+    { timeoutMs: 12000 },
+  );
 }
 
 export async function getHomeNewsFromSheet() {
@@ -241,6 +269,10 @@ export async function refreshVehicleByUser(email) {
 
 export async function registerUser(user) {
   return sendToAppsScript("registerUser", { user });
+}
+
+export async function updateUserPassword(passwordUpdate) {
+  return sendToAppsScript("updateUserPassword", { passwordUpdate });
 }
 
 export async function saveVehicleToSheet(vehicle, user) {

@@ -228,7 +228,7 @@ export const picoPlacaRules = [
   {
     city: "Medellin",
     label: "Medellin y Area Metropolitana",
-    note: "Reglas simuladas para demostracion. Reemplazar por datos desde Google Sheets.",
+    note: "Reglas simuladas para demostracion.",
     schedule: {
       1: [6, 9],
       2: [5, 7],

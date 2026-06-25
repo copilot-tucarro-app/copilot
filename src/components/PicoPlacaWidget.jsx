@@ -76,7 +76,7 @@ function PicoResultCard({ result, isRefreshing, syncStatus }) {
   const visual = getVisualState(result);
   const Icon = visual.icon;
   const sourceLabel = getSourceLabel(result.origenReglas);
-  const showOffline = result.origenReglas && result.origenReglas !== "sheets" && result.origenReglas !== "provided";
+  const showOffline = result.origenReglas && result.origenReglas !== "remote" && result.origenReglas !== "provided";
 
   return (
     <Card className={`mb-5 overflow-hidden ring-1 ${visual.ring}`}>
@@ -120,7 +120,7 @@ function PicoResultCard({ result, isRefreshing, syncStatus }) {
       {result.nota || result.urlFuente ? (
         <div className="border-t border-slate-100 px-4 pb-4 pt-1">
           <p className="text-xs font-semibold leading-5 text-slate-500">
-            {polishSpanishText(result.nota || "Regla cargada desde Google Sheets.")}
+            {polishSpanishText(result.nota || "Regla actualizada.")}
             {result.urlFuente ? (
               <>
                 {" "}
@@ -164,7 +164,7 @@ function PicoLoadingCard() {
         </div>
         <div className="min-w-0">
           <h2 className="font-black text-slate-950">Analizando Pico y Placa</h2>
-          <p className="mt-1 text-sm leading-6 text-slate-500">Consultando ciudad, placa, fecha y reglas de Google Sheets.</p>
+          <p className="mt-1 text-sm leading-6 text-slate-500">Consultando ciudad, placa, fecha y reglas vigentes.</p>
         </div>
       </div>
     </Card>

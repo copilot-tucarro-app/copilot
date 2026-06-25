@@ -1,8 +1,12 @@
 const SPREADSHEET_ID = '1fsDw-bFuLcX_uzIOCyLZ7ZeiiY9KdNDPSXRuT99IxS8';
 const APP_PUBLIC_URL = 'https://copilot-tucarro-app.github.io/copilot/';
+const APP_NAME = 'copilot360';
+const APP_LOGO_URL = APP_PUBLIC_URL + 'copilot360-logo.png';
+const EMAIL_DEFAULT_FROM_NAME = APP_NAME;
 const DEFAULT_AGENT_PASSWORD = 'Copiloto123';
-const OWNER_ACCESS_EMAIL = 'jrudas';
-const OWNER_ACCESS_PASSWORD = 'Rudas2025*';
+const FREE_TRIAL_DAYS = 15;
+const PASSWORD_RESET_CODE_TTL_MINUTES = 15;
+const DATA_TREATMENT_VERSION = 'CO-LEY-1581-2012-v1';
 const DAILY_REMINDER_TRIGGER_HOUR = 0;
 const DAILY_REMINDER_TRIGGER_MINUTE = 0;
 const DOCUMENT_REMINDER_TRIGGER_HOUR = DAILY_REMINDER_TRIGGER_HOUR;
@@ -57,6 +61,13 @@ const DOCUMENT_REMINDER_DEFINITIONS = [
   },
 ];
 
+const DEFAULT_ALLY_EMAIL_TEMPLATES = {
+  welcome: 'El {nombreCDA} en alianza con ' + APP_NAME + ' te da la bienvenida. Tu servicio ' + APP_NAME + ' Conductores quedo activado por 1 ano.',
+  documentReminder: 'El {nombreCDA} en alianza con ' + APP_NAME + ' te recuerda que tu {documento} se vence en {diasRestantes} dias.',
+  picoPlaca: 'El {nombreCDA} en alianza con ' + APP_NAME + ' te recuerda que hoy tienes pico y placa para la placa {placa}.',
+  importantAlert: 'El {nombreCDA} en alianza con ' + APP_NAME + ' tiene una alerta importante para tu vehiculo {placa}.',
+};
+
 const SHEETS = {
   compradores: {
     name: 'Compradores',
@@ -64,7 +75,41 @@ const SHEETS = {
   },
   usuarios: {
     name: 'Usuarios',
-    headers: ['createdAt', 'userId', 'nombre', 'correo', 'telefono', 'ciudad', 'password', 'role', 'source', 'canUseSalesAgent'],
+    headers: [
+      'createdAt',
+      'userId',
+      'nombre',
+      'correo',
+      'telefono',
+      'ciudad',
+      'password',
+      'role',
+      'source',
+      'canUseSalesAgent',
+      'subscriptionStatus',
+      'subscriptionEndsAt',
+      'trialStartedAt',
+      'trialEndsAt',
+      'dataTreatmentAcceptedAt',
+      'dataTreatmentVersion',
+      'passwordResetCode',
+      'passwordResetExpiresAt',
+      'passwordResetUsedAt',
+      'mustChangePassword',
+      'passwordUpdatedAt',
+      'idCDA',
+      'codigoAliado',
+      'nombreCDA',
+      'logoCdaUrl',
+      'plantillaBienvenida',
+      'plantillaVencimiento',
+      'plantillaPicoPlaca',
+      'plantillaAlerta',
+    ],
+  },
+  cdaAliados: {
+    name: 'CDAAliados',
+    headers: ['idCDA', 'nombreCDA', 'codigoAliado', 'correo', 'logoCdaUrl', 'plantillaBienvenida', 'plantillaVencimiento', 'plantillaPicoPlaca', 'plantillaAlerta', 'activo'],
   },
   vehiculos: {
     name: 'Vehiculos',
@@ -105,6 +150,10 @@ const SHEETS = {
     name: 'CorreosPicoPlaca',
     headers: ['timestamp', 'notificationKey', 'userEmail', 'nombre', 'vehicleId', 'placa', 'ciudad', 'tipoVehiculo', 'fechaRestriccion', 'digitoEvaluado', 'horario', 'status', 'message'],
   },
+  correosNovedades: {
+    name: 'CorreosNovedades',
+    headers: ['timestamp', 'notificationKey', 'userEmail', 'nombre', 'newsId', 'seccion', 'titulo', 'fechaPublicacion', 'status', 'message'],
+  },
   novedades: {
     name: 'Novedades',
     headers: ['id', 'seccion', 'titulo', 'descripcion', 'categoria', 'fecha', 'imageUrl', 'videoUrl', 'activo'],
@@ -139,11 +188,10 @@ const SHEETS = {
   },
 };
 
-function setupCopilotSheets() {
+function setupCopilotConfig() {
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   Object.values(SHEETS).forEach((definition) => ensureSheet_(ss, definition.name, definition.headers));
-  ensureOwnerUser_();
-  return { ok: true, message: 'COPILOT sheets ready' };
+  return { ok: true, message: APP_NAME + ' config ready' };
 }
 
 function doGet(e) {
@@ -151,7 +199,7 @@ function doGet(e) {
   const callback = e && e.parameter && e.parameter.callback ? e.parameter.callback : '';
 
   if (action === 'setup') {
-    return json_(setupCopilotSheets());
+    return json_(setupCopilotConfig());
   }
 
   if (action === 'validateLogin') {
@@ -159,8 +207,33 @@ function doGet(e) {
     return callback ? jsonp_(callback, result) : json_(result);
   }
 
+  if (action === 'requestPasswordReset') {
+    const result = requestPasswordReset_(e.parameter.email || '');
+    return callback ? jsonp_(callback, result) : json_(result);
+  }
+
+  if (action === 'resetPassword') {
+    const result = resetPassword_(e.parameter.email || '', e.parameter.code || '', e.parameter.password || '');
+    return callback ? jsonp_(callback, result) : json_(result);
+  }
+
   if (action === 'getHomeNews') {
     const result = getHomeNews_();
+    return callback ? jsonp_(callback, result) : json_(result);
+  }
+
+  if (action === 'sendNewsPublicationNotifications') {
+    const result = sendNewsPublicationNotifications();
+    return callback ? jsonp_(callback, result) : json_(result);
+  }
+
+  if (action === 'installNewsPublicationTrigger') {
+    const result = installNewsPublicationTrigger();
+    return callback ? jsonp_(callback, result) : json_(result);
+  }
+
+  if (action === 'removeNewsPublicationTriggers') {
+    const result = removeNewsPublicationTriggers();
     return callback ? jsonp_(callback, result) : json_(result);
   }
 
@@ -184,6 +257,11 @@ function doGet(e) {
     return callback ? jsonp_(callback, result) : json_(result);
   }
 
+  if (action === 'getClientConfig') {
+    const result = getClientConfig_();
+    return callback ? jsonp_(callback, result) : json_(result);
+  }
+
   if (action === 'getVehicleByUser') {
     const result = getVehicleByUser_(e.parameter.email || '');
     return callback ? jsonp_(callback, result) : json_(result);
@@ -191,7 +269,7 @@ function doGet(e) {
 
   const result = {
     ok: true,
-    app: 'COPILOT',
+    app: APP_NAME,
     action,
     timestamp: new Date().toISOString(),
   };
@@ -203,7 +281,7 @@ function doPost(e) {
   const payload = parsePayload_(e);
 
   try {
-    setupCopilotSheets();
+    setupCopilotConfig();
     const result = handleAction_(payload);
     appendApiLog_(payload.action || 'unknown', 'ok', result.message || 'OK', payload);
     return json_(result);
@@ -228,8 +306,16 @@ function handleAction_(payload) {
     return registerUser_(payload.user || {});
   }
 
+  if (action === 'updateUserPassword') {
+    return updateUserPassword_(payload.passwordUpdate || {});
+  }
+
   if (action === 'saveVehicle') {
     return saveVehicle_(payload.vehicle || {}, payload.user || {});
+  }
+
+  if (action === 'sendNewsPublicationNotifications') {
+    return sendNewsPublicationNotifications();
   }
 
   if (action === 'logEvent') {
@@ -248,6 +334,7 @@ function registerBuyerFromAgent_(buyer) {
   const createdAt = buyer.createdAt || new Date().toISOString();
   const buyerId = buyer.id || Utilities.getUuid();
   const email = String(buyer.email).trim().toLowerCase();
+  const trial = buildFreeTrialAccess_(createdAt);
 
   appendRow_(SHEETS.compradores.name, [
     createdAt,
@@ -274,6 +361,15 @@ function registerBuyerFromAgent_(buyer) {
     'buyer',
     buyer.source || 'sales-agent',
     false,
+    trial.subscriptionStatus,
+    '',
+    trial.trialStartedAt,
+    trial.trialEndsAt,
+    buyer.dataTreatmentAcceptedAt || '',
+    buyer.dataTreatmentVersion || DATA_TREATMENT_VERSION,
+    '',
+    '',
+    '',
   ]);
 
   if (buyer.plate) {
@@ -306,24 +402,633 @@ function registerBuyerFromAgent_(buyer) {
   return { ok: true, message: 'Buyer registered', buyerId };
 }
 
+function getClientConfig_() {
+  const properties = PropertiesService.getScriptProperties();
+
+  return {
+    ok: true,
+    mapboxAccessToken: properties.getProperty('MAPBOX_ACCESS_TOKEN') || '',
+  };
+}
+
+function getEmailDeliveryStatus() {
+  const config = getEmailDeliveryConfig_();
+  const remainingMailAppQuota = (() => {
+    try {
+      return MailApp.getRemainingDailyQuota();
+    } catch (error) {
+      return null;
+    }
+  })();
+
+  return {
+    ok: true,
+    provider: config.provider,
+    sesConfigured: config.ses.enabled,
+    sesRegion: config.ses.region,
+    sesFromEmail: config.ses.fromEmail,
+    brevoConfigured: config.brevo.enabled,
+    brevoFromEmail: config.brevo.fromEmail,
+    newsNotificationAudience: getNewsNotificationAudience_(),
+    fallbackToMailApp: config.fallbackToMailApp,
+    remainingMailAppQuota,
+  };
+}
+
+function sendTestTransactionalEmail() {
+  const properties = PropertiesService.getScriptProperties();
+  const to = String(properties.getProperty('EMAIL_TEST_TO') || Session.getActiveUser().getEmail() || '').trim();
+
+  if (!isLikelyEmail_(to)) {
+    throw new Error('Configura EMAIL_TEST_TO en Script Properties con un correo valido para probar.');
+  }
+
+  const delivery = sendTransactionalEmail_({
+    to,
+    subject: 'Prueba de correo ' + APP_NAME,
+    body: 'Este es un correo de prueba enviado por ' + APP_NAME + '.',
+    htmlBody: '<p>Este es un correo de prueba enviado por <strong>' + APP_NAME + '</strong>.</p>',
+    name: EMAIL_DEFAULT_FROM_NAME,
+  });
+
+  appendApiLog_('sendTestTransactionalEmail', 'ok', 'Test email sent via ' + delivery.provider, {
+    to,
+    provider: delivery.provider,
+    messageId: delivery.messageId || '',
+  });
+
+  return {
+    ok: true,
+    to,
+    delivery,
+  };
+}
+
+function sendTransactionalEmail_(options) {
+  const message = normalizeTransactionalEmail_(options);
+  const config = getEmailDeliveryConfig_();
+
+  if (config.provider === 'ses') {
+    if (!config.ses.enabled) {
+      if (config.fallbackToMailApp) return sendMailAppEmail_(message);
+      throw new Error('Amazon SES no esta configurado. Revisa AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, SES_REGION y SES_FROM_EMAIL.');
+    }
+
+    try {
+      return sendSesEmail_(message, config.ses);
+    } catch (error) {
+      if (config.fallbackToMailApp) {
+        const fallbackDelivery = sendMailAppEmail_(message);
+        fallbackDelivery.fallbackReason = error.message;
+        return fallbackDelivery;
+      }
+      throw error;
+    }
+  }
+
+  if (config.provider === 'brevo') {
+    if (!config.brevo.enabled) {
+      if (config.fallbackToMailApp) return sendMailAppEmail_(message);
+      throw new Error('Brevo no esta configurado. Revisa BREVO_API_KEY y BREVO_FROM_EMAIL.');
+    }
+
+    try {
+      return sendBrevoEmail_(message, config.brevo);
+    } catch (error) {
+      if (config.fallbackToMailApp) {
+        const fallbackDelivery = sendMailAppEmail_(message);
+        fallbackDelivery.fallbackReason = error.message;
+        return fallbackDelivery;
+      }
+      throw error;
+    }
+  }
+
+  if (config.provider === 'mailapp') {
+    return sendMailAppEmail_(message);
+  }
+
+  throw new Error('Proveedor de correo no soportado: ' + config.provider);
+}
+
+function getEmailDeliveryConfig_() {
+  const properties = PropertiesService.getScriptProperties();
+  const providerValue = String(properties.getProperty('EMAIL_PROVIDER') || '').trim().toLowerCase();
+  const ses = {
+    accessKeyId: String(properties.getProperty('AWS_ACCESS_KEY_ID') || '').trim(),
+    secretAccessKey: String(properties.getProperty('AWS_SECRET_ACCESS_KEY') || '').trim(),
+    sessionToken: String(properties.getProperty('AWS_SESSION_TOKEN') || '').trim(),
+    region: String(properties.getProperty('SES_REGION') || 'us-east-1').trim(),
+    fromEmail: String(properties.getProperty('SES_FROM_EMAIL') || '').trim(),
+    fromName: String(properties.getProperty('SES_FROM_NAME') || EMAIL_DEFAULT_FROM_NAME).trim(),
+    replyToEmail: String(properties.getProperty('SES_REPLY_TO_EMAIL') || '').trim(),
+    configurationSet: String(properties.getProperty('SES_CONFIGURATION_SET') || '').trim(),
+  };
+  ses.enabled = Boolean(ses.accessKeyId && ses.secretAccessKey && ses.region && ses.fromEmail);
+  const brevo = {
+    apiKey: String(properties.getProperty('BREVO_API_KEY') || '').trim(),
+    fromEmail: String(properties.getProperty('BREVO_FROM_EMAIL') || properties.getProperty('SES_FROM_EMAIL') || '').trim(),
+    fromName: String(properties.getProperty('BREVO_FROM_NAME') || properties.getProperty('SES_FROM_NAME') || EMAIL_DEFAULT_FROM_NAME).trim(),
+    replyToEmail: String(properties.getProperty('BREVO_REPLY_TO_EMAIL') || properties.getProperty('SES_REPLY_TO_EMAIL') || '').trim(),
+  };
+  brevo.enabled = Boolean(brevo.apiKey && brevo.fromEmail);
+
+  return {
+    provider: providerValue || (ses.enabled ? 'ses' : brevo.enabled ? 'brevo' : 'mailapp'),
+    fallbackToMailApp: parseBooleanProperty_(properties.getProperty('EMAIL_FALLBACK_TO_MAILAPP'), false),
+    ses,
+    brevo,
+  };
+}
+
+function normalizeTransactionalEmail_(options) {
+  const message = options || {};
+  const to = splitEmailAddresses_(message.to);
+
+  if (!to.length) throw new Error('El correo no tiene destinatario.');
+  if (!message.subject) throw new Error('El correo no tiene asunto.');
+  if (!message.body && !message.htmlBody) throw new Error('El correo no tiene contenido.');
+
+  return {
+    to,
+    subject: String(message.subject || ''),
+    body: String(message.body || stripHtml_(message.htmlBody || '')),
+    htmlBody: message.htmlBody ? String(message.htmlBody) : '',
+    name: String(message.name || EMAIL_DEFAULT_FROM_NAME).trim(),
+    replyTo: String(message.replyTo || '').trim(),
+  };
+}
+
+function sendMailAppEmail_(message) {
+  const mailOptions = {
+    to: message.to.join(','),
+    subject: message.subject,
+    body: message.body,
+    name: message.name || EMAIL_DEFAULT_FROM_NAME,
+  };
+
+  if (message.htmlBody) mailOptions.htmlBody = message.htmlBody;
+  if (message.replyTo) mailOptions.replyTo = message.replyTo;
+
+  MailApp.sendEmail(mailOptions);
+  return { provider: 'mailapp' };
+}
+
+function sendSesEmail_(message, config) {
+  const region = config.region;
+  const service = 'ses';
+  const host = 'email.' + region + '.amazonaws.com';
+  const endpoint = 'https://' + host + '/v2/email/outbound-emails';
+  const now = new Date();
+  const amzDate = Utilities.formatDate(now, 'GMT', "yyyyMMdd'T'HHmmss'Z'");
+  const dateStamp = Utilities.formatDate(now, 'GMT', 'yyyyMMdd');
+  const body = JSON.stringify(buildSesPayload_(message, config));
+  const signedHeadersList = ['content-type', 'host', 'x-amz-date'].concat(config.sessionToken ? ['x-amz-security-token'] : []);
+  const canonicalHeaders = [
+    'content-type:application/json',
+    'host:' + host,
+    'x-amz-date:' + amzDate,
+  ].concat(config.sessionToken ? ['x-amz-security-token:' + config.sessionToken] : []).join('\n') + '\n';
+  const signedHeaders = signedHeadersList.join(';');
+  const canonicalRequest = [
+    'POST',
+    '/v2/email/outbound-emails',
+    '',
+    canonicalHeaders,
+    signedHeaders,
+    sha256Hex_(body),
+  ].join('\n');
+  const credentialScope = [dateStamp, region, service, 'aws4_request'].join('/');
+  const stringToSign = [
+    'AWS4-HMAC-SHA256',
+    amzDate,
+    credentialScope,
+    sha256Hex_(canonicalRequest),
+  ].join('\n');
+  const signingKey = getAwsSignatureKey_(config.secretAccessKey, dateStamp, region, service);
+  const signature = bytesToHex_(Utilities.computeHmacSha256Signature(Utilities.newBlob(stringToSign).getBytes(), signingKey));
+  const headers = {
+    Authorization: 'AWS4-HMAC-SHA256 Credential=' + config.accessKeyId + '/' + credentialScope + ', SignedHeaders=' + signedHeaders + ', Signature=' + signature,
+    'X-Amz-Date': amzDate,
+  };
+
+  if (config.sessionToken) headers['X-Amz-Security-Token'] = config.sessionToken;
+
+  const response = UrlFetchApp.fetch(endpoint, {
+    method: 'post',
+    contentType: 'application/json',
+    headers,
+    payload: body,
+    muteHttpExceptions: true,
+  });
+  const responseCode = response.getResponseCode();
+  const responseText = response.getContentText();
+
+  if (responseCode < 200 || responseCode >= 300) {
+    throw new Error('Amazon SES error ' + responseCode + ': ' + responseText.slice(0, 500));
+  }
+
+  const payload = responseText ? JSON.parse(responseText) : {};
+  return {
+    provider: 'ses',
+    messageId: payload.MessageId || '',
+    responseCode,
+  };
+}
+
+function sendBrevoEmail_(message, config) {
+  const response = UrlFetchApp.fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'post',
+    contentType: 'application/json',
+    headers: {
+      Accept: 'application/json',
+      'api-key': config.apiKey,
+    },
+    payload: JSON.stringify(buildBrevoPayload_(message, config)),
+    muteHttpExceptions: true,
+  });
+  const responseCode = response.getResponseCode();
+  const responseText = response.getContentText();
+
+  if (responseCode < 200 || responseCode >= 300) {
+    throw new Error('Brevo error ' + responseCode + ': ' + responseText.slice(0, 500));
+  }
+
+  const payload = responseText ? JSON.parse(responseText) : {};
+  return {
+    provider: 'brevo',
+    messageId: payload.messageId || '',
+    responseCode,
+  };
+}
+
+function buildBrevoPayload_(message, config) {
+  const payload = {
+    sender: {
+      name: message.name || config.fromName || EMAIL_DEFAULT_FROM_NAME,
+      email: config.fromEmail,
+    },
+    to: message.to.map((email) => ({ email })),
+    subject: message.subject,
+    textContent: message.body,
+  };
+  const replyToAddresses = splitEmailAddresses_(message.replyTo || config.replyToEmail);
+
+  if (message.htmlBody) payload.htmlContent = message.htmlBody;
+  if (replyToAddresses.length) payload.replyTo = { email: replyToAddresses[0] };
+
+  return payload;
+}
+
+function buildSesPayload_(message, config) {
+  const payload = {
+    FromEmailAddress: formatSesAddress_(config.fromEmail, message.name || config.fromName),
+    Destination: {
+      ToAddresses: message.to,
+    },
+    Content: {
+      Simple: {
+        Subject: {
+          Data: message.subject,
+          Charset: 'UTF-8',
+        },
+        Body: {
+          Text: {
+            Data: message.body,
+            Charset: 'UTF-8',
+          },
+        },
+      },
+    },
+  };
+  const replyToAddresses = splitEmailAddresses_(message.replyTo || config.replyToEmail);
+
+  if (message.htmlBody) {
+    payload.Content.Simple.Body.Html = {
+      Data: message.htmlBody,
+      Charset: 'UTF-8',
+    };
+  }
+
+  if (replyToAddresses.length) payload.ReplyToAddresses = replyToAddresses;
+  if (config.configurationSet) payload.ConfigurationSetName = config.configurationSet;
+
+  return payload;
+}
+
+function getAwsSignatureKey_(secretKey, dateStamp, regionName, serviceName) {
+  const kDate = Utilities.computeHmacSha256Signature(dateStamp, 'AWS4' + secretKey);
+  const kRegion = Utilities.computeHmacSha256Signature(Utilities.newBlob(regionName).getBytes(), kDate);
+  const kService = Utilities.computeHmacSha256Signature(Utilities.newBlob(serviceName).getBytes(), kRegion);
+  return Utilities.computeHmacSha256Signature(Utilities.newBlob('aws4_request').getBytes(), kService);
+}
+
+function sha256Hex_(value) {
+  return bytesToHex_(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, value, Utilities.Charset.UTF_8));
+}
+
+function bytesToHex_(bytes) {
+  return bytes.map((byte) => ('0' + (byte & 0xff).toString(16)).slice(-2)).join('');
+}
+
+function formatSesAddress_(email, name) {
+  const cleanEmail = String(email || '').trim();
+  const cleanName = String(name || '').trim();
+
+  if (!cleanName) return cleanEmail;
+  return '"' + cleanName.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '" <' + cleanEmail + '>';
+}
+
+function splitEmailAddresses_(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item || '').trim()).filter(isLikelyEmail_);
+  }
+
+  return String(value || '')
+    .split(/[;,]/)
+    .map((item) => item.trim())
+    .filter(isLikelyEmail_);
+}
+
+function stripHtml_(value) {
+  return String(value || '')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function parseBooleanProperty_(value, fallback) {
+  if (value === '' || value === null || typeof value === 'undefined') return fallback;
+  const text = String(value).trim().toLowerCase();
+  return text === 'true' || text === 'si' || text === 'sí' || text === '1' || text === 'yes' || text === 'activo';
+}
+
 function registerUser_(user) {
   const createdAt = user.createdAt || new Date().toISOString();
   const userId = user.id || Utilities.getUuid();
+  const email = String(user.email || '').trim().toLowerCase();
+  const trial = buildFreeTrialAccess_(createdAt);
+  const subscriptionStatus = String(user.subscriptionStatus || '').trim().toLowerCase() === 'active' ? 'active' : trial.subscriptionStatus;
+  const subscriptionEndsAt = subscriptionStatus === 'active' ? user.subscriptionEndsAt || '' : '';
+  const mustChangePassword = shouldRequirePasswordChange_(user);
 
   appendRow_(SHEETS.usuarios.name, [
     createdAt,
     userId,
     user.name || '',
-    String(user.email || '').trim().toLowerCase(),
+    email,
     cleanPhone_(user.phone || ''),
     user.city || '',
     user.password || '',
     user.role || 'driver',
     user.source || 'self-register',
-    Boolean(user.canUseSalesAgent),
+    parseBoolean_(user.canUseSalesAgent),
+    subscriptionStatus,
+    subscriptionEndsAt,
+    user.trialStartedAt || trial.trialStartedAt,
+    user.trialEndsAt || trial.trialEndsAt,
+    user.dataTreatmentAcceptedAt || createdAt,
+    user.dataTreatmentVersion || DATA_TREATMENT_VERSION,
+    '',
+    '',
+    '',
+    mustChangePassword,
+    user.passwordUpdatedAt || '',
+    user.idCDA || '',
+    user.codigoAliado || '',
+    user.nombreCDA || '',
+    user.logoCdaUrl || '',
+    user.plantillaBienvenida || '',
+    user.plantillaVencimiento || '',
+    user.plantillaPicoPlaca || '',
+    user.plantillaAlerta || '',
   ]);
 
-  return { ok: true, message: 'User registered', userId };
+  const welcomeEmail = sendCdaActivationWelcomeEmailIfNeeded_(user, {
+    email,
+    userId,
+    subscriptionEndsAt,
+  });
+
+  return { ok: true, message: 'User registered', userId, welcomeEmailSent: welcomeEmail.sent, welcomeEmailMessage: welcomeEmail.message };
+}
+
+function sendCdaActivationWelcomeEmailIfNeeded_(user, context) {
+  const email = String(context.email || '').trim().toLowerCase();
+  if (!shouldSendCdaActivationWelcomeEmail_(user, email)) {
+    return { sent: false, message: 'Welcome email skipped' };
+  }
+
+  try {
+    const emailPayload = buildCdaActivationWelcomeEmail_(user, context);
+    const mailOptions = {
+      to: email,
+      subject: emailPayload.subject,
+      body: emailPayload.plainBody,
+      htmlBody: emailPayload.htmlBody,
+      name: emailPayload.senderName,
+    };
+
+    if (emailPayload.replyTo) {
+      mailOptions.replyTo = emailPayload.replyTo;
+    }
+
+    sendTransactionalEmail_(mailOptions);
+    appendApiLog_('sendCdaActivationWelcomeEmail', 'ok', 'Welcome email sent', {
+      email,
+      userId: context.userId,
+      codigoAliado: user.codigoAliado || '',
+    });
+    return { sent: true, message: 'Welcome email sent' };
+  } catch (error) {
+    appendApiLog_('sendCdaActivationWelcomeEmail', 'error', error.message, {
+      email,
+      userId: context.userId,
+      codigoAliado: user.codigoAliado || '',
+    });
+    return { sent: false, message: error.message };
+  }
+}
+
+function shouldSendCdaActivationWelcomeEmail_(user, email) {
+  if (!isLikelyEmail_(email)) return false;
+  if (user.sendWelcomeEmail === false) return false;
+
+  const source = String(user.source || '').trim().toLowerCase();
+  return Boolean(user.codigoAliado || user.idCDA || source === 'manual-caja' || source === 'pre-registro' || source === 'cda-caja');
+}
+
+function buildCdaActivationWelcomeEmail_(user, context) {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const cdaConfigsByCode = buildCdaConfigsByCode_(ss);
+  const code = String(user.codigoAliado || '').trim();
+  const config = cdaConfigsByCode[normalizeHeader_(code)] || {};
+  const ally = normalizeAllyBranding_({
+    idCDA: user.idCDA || config.idCDA || '',
+    codigoAliado: code || config.codigoAliado || '',
+    nombreCDA: user.nombreCDA || config.nombreCDA || '',
+    logoCdaUrl: user.logoCdaUrl || config.logoCdaUrl || '',
+    templates: {
+      welcome: user.plantillaBienvenida || config.plantillaBienvenida || DEFAULT_ALLY_EMAIL_TEMPLATES.welcome,
+      documentReminder: user.plantillaVencimiento || config.plantillaVencimiento || DEFAULT_ALLY_EMAIL_TEMPLATES.documentReminder,
+      picoPlaca: user.plantillaPicoPlaca || config.plantillaPicoPlaca || DEFAULT_ALLY_EMAIL_TEMPLATES.picoPlaca,
+      importantAlert: user.plantillaAlerta || config.plantillaAlerta || DEFAULT_ALLY_EMAIL_TEMPLATES.importantAlert,
+    },
+  });
+  const name = String(user.name || user.nombre || context.email || 'conductor').trim();
+  const cdaName = ally ? ally.nombreCDA : APP_NAME;
+  const welcomeMessage = ally
+    ? renderAllyTemplate_(ally.templates.welcome, {
+        nombreCDA: ally.nombreCDA,
+        codigoAliado: ally.codigoAliado,
+        nombreCliente: name,
+        documento: '',
+        diasRestantes: '',
+        placa: '',
+        ciudad: user.city || user.ciudad || '',
+        fecha: '',
+      })
+    : 'Tu servicio ' + APP_NAME + ' Conductores quedo activado exitosamente por 1 ano.';
+  const replyTo = getCdaReplyToEmail_(user, config);
+  const values = {
+    nombreUsuario: escapeHtml_(name),
+    allyHeaderHtml: ally ? buildAllyHeaderHtml_(ally) : '',
+    mensajeBienvenida: escapeHtml_(welcomeMessage),
+    cdaNombre: escapeHtml_(cdaName),
+    codigoAliado: escapeHtml_(ally ? ally.codigoAliado : String(user.codigoAliado || '')),
+    usuarioAcceso: escapeHtml_(context.email),
+    passwordTemporal: escapeHtml_(user.password || ''),
+    fechaVencimiento: escapeHtml_(formatSheetDate_(context.subscriptionEndsAt || user.subscriptionEndsAt || '')),
+    urlApp: escapeHtml_(APP_PUBLIC_URL),
+    footerText: 'Powered By ' + APP_NAME,
+  };
+
+  return {
+    subject: ally ? ally.nombreCDA + ' + ' + APP_NAME + ': bienvenida a tu servicio' : 'Bienvenido a Servicio ' + APP_NAME + ' Conductores',
+    senderName: ally ? ally.nombreCDA + ' en alianza con ' + APP_NAME : APP_NAME,
+    replyTo,
+    htmlBody: buildCdaActivationWelcomeHtml_(values),
+    plainBody: buildCdaActivationWelcomePlainBody_({
+      name,
+      welcomeMessage,
+      cdaName,
+      codigoAliado: ally ? ally.codigoAliado : user.codigoAliado || '',
+      usuarioAcceso: context.email,
+      passwordTemporal: user.password || '',
+      fechaVencimiento: formatSheetDate_(context.subscriptionEndsAt || user.subscriptionEndsAt || ''),
+      urlApp: APP_PUBLIC_URL,
+    }),
+  };
+}
+
+function getCdaReplyToEmail_(user, config) {
+  const candidate = String(user.correoCDA || config.correo || '').trim().toLowerCase();
+  return isLikelyEmail_(candidate) ? candidate : '';
+}
+
+function buildCdaActivationWelcomePlainBody_(values) {
+  return [
+    'Hola ' + values.name + ',',
+    '',
+    values.welcomeMessage,
+    '',
+    'Tu servicio ' + APP_NAME + ' Conductores quedo activado por 1 ano.',
+    'CDA aliado: ' + values.cdaName,
+    'Codigo CDA: ' + values.codigoAliado,
+    'Usuario: ' + values.usuarioAcceso,
+    'Clave temporal: ' + values.passwordTemporal,
+    values.fechaVencimiento ? 'Vigente hasta: ' + values.fechaVencimiento : '',
+    '',
+    'Ingresa aqui: ' + values.urlApp,
+    '',
+    'Powered By ' + APP_NAME + '.',
+  ].filter(function(line) {
+    return line !== '';
+  }).join('\n');
+}
+
+function buildCdaActivationWelcomeHtml_(values) {
+  const template = `<!DOCTYPE html>
+<html lang="es">
+<body style="margin:0;padding:0;background:#f5f7fb;font-family:Arial,sans-serif;color:#1f2937;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="padding:24px 0;background:#f5f7fb;">
+    <tr>
+      <td align="center">
+        <table width="100%" cellpadding="0" cellspacing="0" style="max-width:620px;background:#ffffff;border-radius:18px;overflow:hidden;box-shadow:0 10px 28px rgba(15,23,42,.10);">
+          <tr>
+            <td align="center" style="padding:26px 20px 14px;background:#101828;">
+              <img src="${APP_LOGO_URL}"
+                   alt="${APP_NAME}"
+                   style="max-width:160px;height:auto;display:block;margin:auto;">
+              <p style="color:#d0d5dd;margin:14px 0 0;font-size:14px;">
+                Servicio ${APP_NAME} Conductores
+              </p>
+              {{allyHeaderHtml}}
+            </td>
+          </tr>
+
+          <tr>
+            <td style="padding:30px 26px;">
+              <p style="font-size:17px;margin:0 0 16px;">
+                Hola <strong>{{nombreUsuario}}</strong>,
+              </p>
+
+              <p style="font-size:16px;line-height:1.6;margin:0 0 18px;">
+                {{mensajeBienvenida}}
+              </p>
+
+              <div style="background:#ecfdf3;border:1px solid #abefc6;border-radius:16px;padding:18px;text-align:center;margin:0 0 22px;">
+                <p style="margin:0;color:#027a48;font-size:13px;font-weight:bold;text-transform:uppercase;letter-spacing:.06em;">
+                  Servicio activado
+                </p>
+                <p style="margin:8px 0 0;color:#027a48;font-size:34px;font-weight:800;">
+                  1 a&ntilde;o
+                </p>
+                <p style="margin:0;color:#027a48;font-size:15px;">
+                  membres&iacute;a anual activa
+                </p>
+              </div>
+
+              <table width="100%" cellpadding="0" cellspacing="0" style="background:#f9fafb;border-radius:14px;margin:0 0 22px;">
+                <tr>
+                  <td style="padding:16px;font-size:15px;line-height:1.8;">
+                    <strong>CDA aliado:</strong> {{cdaNombre}}<br>
+                    <strong>C&oacute;digo CDA:</strong> {{codigoAliado}}<br>
+                    <strong>Usuario:</strong> {{usuarioAcceso}}<br>
+                    <strong>Clave temporal:</strong> {{passwordTemporal}}<br>
+                    <strong>Vigente hasta:</strong> {{fechaVencimiento}}
+                  </td>
+                </tr>
+              </table>
+
+              <p style="font-size:15px;line-height:1.6;color:#475467;margin:0 0 22px;">
+                Ahora podr&aacute;s recibir recordatorios autom&aacute;ticos, pico y placa, alertas importantes y novedades de tr&aacute;nsito.
+              </p>
+
+              <div style="text-align:center;margin:28px 0;">
+                <a href="{{urlApp}}"
+                   style="background:#101828;color:#ffffff;text-decoration:none;padding:14px 24px;border-radius:12px;font-size:16px;font-weight:bold;display:inline-block;">
+                  Entrar a ${APP_NAME}
+                </a>
+              </div>
+            </td>
+          </tr>
+
+          <tr>
+            <td style="background:#101828;padding:18px 24px;text-align:center;font-size:12px;color:#d0d5dd;">
+              {{footerText}}
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+
+  return fillTemplate_(template, values);
 }
 
 function validateLogin_(identifier, password) {
@@ -334,12 +1039,9 @@ function validateLogin_(identifier, password) {
     return { ok: false, message: 'Correo/usuario y contraseña son obligatorios' };
   }
 
-  const sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName(SHEETS.usuarios.name);
-  const rows = getRowsAsObjects_(sheet);
-  const user = rows
-    .slice()
-    .reverse()
-    .find((row) => String(row.correo || '').trim().toLowerCase() === cleanIdentifier);
+  const sheet = ensureSheet_(SpreadsheetApp.openById(SPREADSHEET_ID), SHEETS.usuarios.name, SHEETS.usuarios.headers);
+  const userRecord = findUserRecordByEmail_(sheet, cleanIdentifier);
+  const user = userRecord ? userRecord.user : null;
 
   if (!user) {
     return { ok: false, message: 'Usuario no encontrado' };
@@ -356,6 +1058,17 @@ function validateLogin_(identifier, password) {
     return { ok: false, message: 'Contraseña incorrecta' };
   }
 
+  const access = ensureUserAccess_(sheet, userRecord.rowNumber, user);
+  if (!access.active) {
+    return {
+      ok: false,
+      message: access.message || 'Tu suscripción o prueba gratis no está activa.',
+      access,
+    };
+  }
+
+  const passwordChangeRequired = isPasswordChangeRequiredForUser_(user);
+
   return {
     ok: true,
     message: 'Login validado',
@@ -368,42 +1081,298 @@ function validateLogin_(identifier, password) {
       role: user.role || 'driver',
       source: user.source || 'sheet-login',
       canUseSalesAgent: parseBoolean_(user.canUseSalesAgent),
+      subscriptionStatus: user.subscriptionStatus || access.status || '',
+      subscriptionEndsAt: formatSheetDateTime_(user.subscriptionEndsAt || access.subscriptionEndsAt || ''),
+      trialStartedAt: formatSheetDateTime_(user.trialStartedAt || access.trialStartedAt || ''),
+      trialEndsAt: formatSheetDateTime_(user.trialEndsAt || access.trialEndsAt || ''),
+      accessActive: access.active,
+      accessType: access.type,
       sheetValidated: true,
+      idCDA: user.idCDA || '',
+      codigoAliado: user.codigoAliado || '',
+      nombreCDA: user.nombreCDA || '',
+      logoCdaUrl: user.logoCdaUrl || '',
+      mustChangePassword: passwordChangeRequired,
+      passwordChangeRequired,
+      passwordUpdatedAt: formatSheetDateTime_(user.passwordUpdatedAt || ''),
     },
   };
 }
 
-function ensureOwnerUser_() {
-  const sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName(SHEETS.usuarios.name);
-  const values = sheet.getDataRange().getValues();
-  const headers = values[0].map((header) => String(header || '').trim());
-  const emailIndex = headers.indexOf('correo');
-  const ownerRowIndex = values.findIndex((row, index) => index > 0 && String(row[emailIndex] || '').trim().toLowerCase() === OWNER_ACCESS_EMAIL);
-
-  if (ownerRowIndex === -1) {
-    appendRow_(SHEETS.usuarios.name, [
-      new Date().toISOString(),
-      'owner-jrudas',
-      'Jrudas',
-      OWNER_ACCESS_EMAIL,
-      '',
-      'Medellin',
-      OWNER_ACCESS_PASSWORD,
-      'owner',
-      'owner-login',
-      true,
-    ]);
-    return;
+function requestPasswordReset_(email) {
+  const cleanEmail = String(email || '').trim().toLowerCase();
+  if (!isLikelyEmail_(cleanEmail)) {
+    return { ok: false, message: 'Ingresa un correo electrónico válido' };
   }
 
-  setCellByHeader_(sheet, ownerRowIndex + 1, headers, 'userId', 'owner-jrudas');
-  setCellByHeader_(sheet, ownerRowIndex + 1, headers, 'nombre', 'Jrudas');
-  setCellByHeader_(sheet, ownerRowIndex + 1, headers, 'correo', OWNER_ACCESS_EMAIL);
-  setCellByHeader_(sheet, ownerRowIndex + 1, headers, 'ciudad', 'Medellin');
-  setCellByHeader_(sheet, ownerRowIndex + 1, headers, 'password', OWNER_ACCESS_PASSWORD);
-  setCellByHeader_(sheet, ownerRowIndex + 1, headers, 'role', 'owner');
-  setCellByHeader_(sheet, ownerRowIndex + 1, headers, 'source', 'owner-login');
-  setCellByHeader_(sheet, ownerRowIndex + 1, headers, 'canUseSalesAgent', true);
+  const sheet = ensureSheet_(SpreadsheetApp.openById(SPREADSHEET_ID), SHEETS.usuarios.name, SHEETS.usuarios.headers);
+  const record = findUserRecordByEmail_(sheet, cleanEmail);
+
+  if (!record) {
+    return { ok: true, message: 'Si el correo existe, enviaremos un código de verificación' };
+  }
+
+  const code = generatePasswordResetCode_();
+  const expiresAt = addMinutes_(new Date(), PASSWORD_RESET_CODE_TTL_MINUTES).toISOString();
+
+  setCellByHeader_(sheet, record.rowNumber, record.headers, 'passwordResetCode', code);
+  setCellByHeader_(sheet, record.rowNumber, record.headers, 'passwordResetExpiresAt', expiresAt);
+  setCellByHeader_(sheet, record.rowNumber, record.headers, 'passwordResetUsedAt', '');
+
+  try {
+    sendPasswordResetEmail_(record.user, code, expiresAt);
+  } catch (error) {
+    appendApiLog_('requestPasswordReset', 'error', error.message, { email: cleanEmail });
+    return { ok: false, message: 'No se pudo enviar el código. Intenta de nuevo.' };
+  }
+
+  appendApiLog_('requestPasswordReset', 'ok', 'Password reset code sent', { email: cleanEmail });
+  return { ok: true, message: 'Código de verificación enviado' };
+}
+
+function resetPassword_(email, code, password) {
+  const cleanEmail = String(email || '').trim().toLowerCase();
+  const cleanCode = String(code || '').replace(/\D/g, '');
+  const newPassword = String(password || '');
+
+  if (!isLikelyEmail_(cleanEmail) || cleanCode.length !== 6 || newPassword.length < 6) {
+    return { ok: false, message: 'Datos de recuperación incompletos' };
+  }
+
+  const sheet = ensureSheet_(SpreadsheetApp.openById(SPREADSHEET_ID), SHEETS.usuarios.name, SHEETS.usuarios.headers);
+  const record = findUserRecordByEmail_(sheet, cleanEmail);
+
+  if (!record) {
+    return { ok: false, message: 'Código inválido o vencido' };
+  }
+
+  const storedCode = String(record.user.passwordResetCode || '').trim();
+  const expiresAt = parseAccessDate_(record.user.passwordResetExpiresAt);
+
+  if (!storedCode || storedCode !== cleanCode || !expiresAt || expiresAt.getTime() < Date.now()) {
+    return { ok: false, message: 'Código inválido o vencido' };
+  }
+
+  setCellByHeader_(sheet, record.rowNumber, record.headers, 'password', newPassword);
+  setCellByHeader_(sheet, record.rowNumber, record.headers, 'passwordResetCode', '');
+  setCellByHeader_(sheet, record.rowNumber, record.headers, 'passwordResetExpiresAt', '');
+  setCellByHeader_(sheet, record.rowNumber, record.headers, 'passwordResetUsedAt', new Date().toISOString());
+  setCellByHeader_(sheet, record.rowNumber, record.headers, 'mustChangePassword', false);
+  setCellByHeader_(sheet, record.rowNumber, record.headers, 'passwordUpdatedAt', new Date().toISOString());
+
+  appendApiLog_('resetPassword', 'ok', 'Password updated with verification code', { email: cleanEmail });
+  return { ok: true, message: 'Contraseña actualizada' };
+}
+
+function updateUserPassword_(passwordUpdate) {
+  const cleanEmail = String(passwordUpdate.email || passwordUpdate.identifier || '').trim().toLowerCase();
+  const cleanUserId = String(passwordUpdate.userId || passwordUpdate.id || '').trim();
+  const newPassword = String(passwordUpdate.newPassword || passwordUpdate.password || '');
+
+  if ((!cleanEmail && !cleanUserId) || newPassword.length < 6) {
+    return { ok: false, message: 'Datos incompletos para actualizar la contrasena' };
+  }
+
+  const sheet = ensureSheet_(SpreadsheetApp.openById(SPREADSHEET_ID), SHEETS.usuarios.name, SHEETS.usuarios.headers);
+  const record = findUserRecordByEmailOrId_(sheet, cleanEmail, cleanUserId);
+
+  if (!record) {
+    return { ok: false, message: 'Usuario no encontrado' };
+  }
+
+  const updatedAt = new Date().toISOString();
+  setCellByHeader_(sheet, record.rowNumber, record.headers, 'password', newPassword);
+  setCellByHeader_(sheet, record.rowNumber, record.headers, 'mustChangePassword', false);
+  setCellByHeader_(sheet, record.rowNumber, record.headers, 'passwordUpdatedAt', updatedAt);
+  setCellByHeader_(sheet, record.rowNumber, record.headers, 'passwordResetCode', '');
+  setCellByHeader_(sheet, record.rowNumber, record.headers, 'passwordResetExpiresAt', '');
+
+  appendApiLog_('updateUserPassword', 'ok', 'Temporary password replaced', {
+    email: cleanEmail,
+    userId: cleanUserId,
+  });
+
+  return {
+    ok: true,
+    message: 'Contrasena actualizada',
+    passwordUpdatedAt: updatedAt,
+  };
+}
+
+function findUserRecordByEmail_(sheet, email) {
+  return findUserRecordByEmailOrId_(sheet, email, '');
+}
+
+function findUserRecordByEmailOrId_(sheet, email, userId) {
+  const values = sheet.getDataRange().getValues();
+  if (values.length < 2) return null;
+
+  const headers = values[0].map((header) => String(header || '').trim());
+  const emailIndex = headers.indexOf('correo');
+  const userIdIndex = headers.indexOf('userId');
+  if (emailIndex < 0 && userIdIndex < 0) return null;
+
+  const cleanEmail = String(email || '').trim().toLowerCase();
+  const cleanUserId = String(userId || '').trim();
+  for (let rowIndex = values.length - 1; rowIndex >= 1; rowIndex -= 1) {
+    const emailMatches = cleanEmail && emailIndex >= 0 && String(values[rowIndex][emailIndex] || '').trim().toLowerCase() === cleanEmail;
+    const userIdMatches = cleanUserId && userIdIndex >= 0 && String(values[rowIndex][userIdIndex] || '').trim() === cleanUserId;
+
+    if (emailMatches || userIdMatches) {
+      const user = {};
+      headers.forEach((header, index) => {
+        user[header] = values[rowIndex][index];
+      });
+      return {
+        rowNumber: rowIndex + 1,
+        headers,
+        user,
+      };
+    }
+  }
+
+  return null;
+}
+
+function ensureUserAccess_(sheet, rowNumber, user) {
+  const currentAccess = getUserAccessState_(user);
+  if (currentAccess.active) return currentAccess;
+
+  const hasTrialHistory = Boolean(user.trialStartedAt || user.trialEndsAt);
+  if (hasTrialHistory) return currentAccess;
+
+  const trial = buildFreeTrialAccess_(new Date());
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map((header) => String(header || '').trim());
+
+  setCellByHeader_(sheet, rowNumber, headers, 'subscriptionStatus', trial.subscriptionStatus);
+  setCellByHeader_(sheet, rowNumber, headers, 'trialStartedAt', trial.trialStartedAt);
+  setCellByHeader_(sheet, rowNumber, headers, 'trialEndsAt', trial.trialEndsAt);
+
+  user.subscriptionStatus = trial.subscriptionStatus;
+  user.trialStartedAt = trial.trialStartedAt;
+  user.trialEndsAt = trial.trialEndsAt;
+
+  return getUserAccessState_(user);
+}
+
+function getUserAccessState_(user) {
+  const role = String(user.role || '').trim().toLowerCase();
+  if (role === 'owner') {
+    return { active: true, type: 'subscription', status: 'active', subscriptionEndsAt: '' };
+  }
+
+  if (isSubscriptionAccessActive_(user.subscriptionStatus, user.subscriptionEndsAt)) {
+    return {
+      active: true,
+      type: 'subscription',
+      status: String(user.subscriptionStatus || 'active').trim().toLowerCase(),
+      subscriptionEndsAt: formatSheetDateTime_(user.subscriptionEndsAt || ''),
+    };
+  }
+
+  if (user.trialEndsAt && !isAccessDateExpired_(user.trialEndsAt)) {
+    return {
+      active: true,
+      type: 'trial',
+      status: 'trial',
+      trialStartedAt: formatSheetDateTime_(user.trialStartedAt || ''),
+      trialEndsAt: formatSheetDateTime_(user.trialEndsAt || ''),
+    };
+  }
+
+  return {
+    active: false,
+    type: 'expired',
+    status: 'expired',
+    trialStartedAt: formatSheetDateTime_(user.trialStartedAt || ''),
+    trialEndsAt: formatSheetDateTime_(user.trialEndsAt || ''),
+    subscriptionEndsAt: formatSheetDateTime_(user.subscriptionEndsAt || ''),
+    message: 'Tu suscripción o prueba gratis no está activa.',
+  };
+}
+
+function isSubscriptionAccessActive_(status, endsAt) {
+  const text = String(status || '').trim().toLowerCase();
+  const activeStatuses = ['active', 'activa', 'paid', 'pagada', 'subscribed', 'suscripcion_activa'];
+  return activeStatuses.indexOf(text) >= 0 && !isAccessDateExpired_(endsAt);
+}
+
+function buildFreeTrialAccess_(startValue) {
+  const startedAt = parseAccessDate_(startValue) || new Date();
+  return {
+    subscriptionStatus: 'trial',
+    trialStartedAt: startedAt.toISOString(),
+    trialEndsAt: addDays_(startedAt, FREE_TRIAL_DAYS).toISOString(),
+  };
+}
+
+function sendPasswordResetEmail_(user, code, expiresAt) {
+  const email = String(user.correo || '').trim().toLowerCase();
+  const name = String(user.nombre || 'conductor').trim();
+  const expiresText = Utilities.formatDate(parseAccessDate_(expiresAt), Session.getScriptTimeZone(), 'dd/MM/yyyy HH:mm');
+  const subject = 'Código para actualizar tu contraseña en ' + APP_NAME;
+  const plainBody = [
+    'Hola ' + name + ',',
+    '',
+    'Tu código para actualizar la contraseña de ' + APP_NAME + ' es: ' + code,
+    'Este código vence el ' + expiresText + '.',
+    '',
+    'Si no solicitaste este cambio, puedes ignorar este mensaje.',
+    'Abrir ' + APP_NAME + ': ' + APP_PUBLIC_URL,
+  ].join('\n');
+  const htmlBody = [
+    '<div style="font-family:Arial,sans-serif;color:#101828;line-height:1.6;max-width:560px;margin:auto;">',
+    '<h2 style="margin:0 0 12px;">Actualiza tu contraseña</h2>',
+    '<p>Hola <strong>' + escapeHtml_(name) + '</strong>,</p>',
+    '<p>Usa este código para actualizar la contraseña de ' + APP_NAME + ':</p>',
+    '<div style="font-size:32px;font-weight:800;letter-spacing:8px;text-align:center;background:#eff6ff;color:#1d4ed8;border-radius:16px;padding:18px;margin:20px 0;">' + code + '</div>',
+    '<p>El código vence el <strong>' + escapeHtml_(expiresText) + '</strong>.</p>',
+    '<p style="color:#667085;font-size:13px;">Si no solicitaste este cambio, puedes ignorar este mensaje.</p>',
+    '<p><a href="' + APP_PUBLIC_URL + '" style="display:inline-block;background:#2563eb;color:#fff;text-decoration:none;padding:12px 18px;border-radius:12px;font-weight:bold;">Abrir ' + APP_NAME + '</a></p>',
+    '</div>',
+  ].join('');
+
+  sendTransactionalEmail_({
+    to: email,
+    subject,
+    body: plainBody,
+    htmlBody,
+  });
+}
+
+function generatePasswordResetCode_() {
+  return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+function addDays_(date, days) {
+  const result = new Date(date.getTime());
+  result.setDate(result.getDate() + days);
+  return result;
+}
+
+function addMinutes_(date, minutes) {
+  const result = new Date(date.getTime());
+  result.setMinutes(result.getMinutes() + minutes);
+  return result;
+}
+
+function parseAccessDate_(value) {
+  if (!value) return null;
+  if (Object.prototype.toString.call(value) === '[object Date]') return value;
+
+  const text = String(value || '').trim();
+  const dateOnlyMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const parsedDate = dateOnlyMatch
+    ? new Date(Number(dateOnlyMatch[1]), Number(dateOnlyMatch[2]) - 1, Number(dateOnlyMatch[3]), 23, 59, 59, 999)
+    : new Date(text);
+
+  return isNaN(parsedDate.getTime()) ? null : parsedDate;
+}
+
+function isAccessDateExpired_(value) {
+  const date = parseAccessDate_(value);
+  if (!date) return false;
+  return date.getTime() < Date.now();
 }
 
 function saveVehicle_(vehicle, user) {
@@ -574,6 +1543,144 @@ function getHomeNews_() {
   return { ok: true, items };
 }
 
+function installNewsPublicationTrigger() {
+  setupCopilotConfig();
+
+  const handlerName = 'sendNewsPublicationNotifications';
+  const removed = removeTriggersByHandlerNames_([handlerName]);
+
+  ScriptApp.newTrigger(handlerName)
+    .forSpreadsheet(SPREADSHEET_ID)
+    .onEdit()
+    .create();
+
+  ScriptApp.newTrigger(handlerName)
+    .timeBased()
+    .everyHours(1)
+    .inTimezone(Session.getScriptTimeZone())
+    .create();
+
+  return {
+    ok: true,
+    message: 'News publication trigger installed',
+    handler: handlerName,
+    triggers: ['onEdit', 'everyHours(1)'],
+    timezone: Session.getScriptTimeZone(),
+    removed,
+  };
+}
+
+function removeNewsPublicationTriggers() {
+  const removed = removeTriggersByHandlerNames_(['sendNewsPublicationNotifications']);
+  return { ok: true, removed };
+}
+
+function sendNewsPublicationNotifications(options) {
+  if (!options || !options.skipSetup) setupCopilotConfig();
+
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const logSheet = ensureSheet_(ss, SHEETS.correosNovedades.name, SHEETS.correosNovedades.headers);
+  const sentKeys = getSentReminderKeys_(logSheet);
+  const audience = getNewsNotificationAudience_();
+  const users = getRowsAsObjects_(ensureSheet_(ss, SHEETS.usuarios.name, SHEETS.usuarios.headers))
+    .filter((user) => {
+      const email = String(user.correo || '').trim().toLowerCase();
+      return isLikelyEmail_(email) && getUserAccessState_(user).active && isUserInNewsAudience_(user, audience);
+    });
+  const newsItems = getHomeNews_().items || [];
+  const summary = {
+    ok: true,
+    audience,
+    checkedUsers: users.length,
+    checkedNews: newsItems.length,
+    sent: 0,
+    skipped: 0,
+    errors: 0,
+    details: [],
+  };
+
+  newsItems.forEach((news) => {
+    users.forEach((user) => {
+      const email = String(user.correo || '').trim().toLowerCase();
+      const userName = user.nombre || email;
+      const notificationKey = buildNewsPublicationKey_(email, news);
+
+      if (sentKeys[notificationKey]) {
+        summary.skipped += 1;
+        return;
+      }
+
+      const emailPayload = buildNewsPublicationEmail_({
+        news,
+        userName,
+        email,
+      });
+
+      try {
+        sendTransactionalEmail_({
+          to: email,
+          subject: emailPayload.subject,
+          body: emailPayload.plainBody,
+          htmlBody: emailPayload.htmlBody,
+          name: EMAIL_DEFAULT_FROM_NAME,
+        });
+
+        appendNewsPublicationLog_(logSheet, {
+          notificationKey,
+          email,
+          userName,
+          news,
+          status: 'sent',
+          message: emailPayload.subject,
+        });
+
+        sentKeys[notificationKey] = true;
+        summary.sent += 1;
+        summary.details.push({
+          email,
+          newsId: news.id,
+          title: news.title,
+          status: 'sent',
+        });
+      } catch (error) {
+        appendNewsPublicationLog_(logSheet, {
+          notificationKey,
+          email,
+          userName,
+          news,
+          status: 'error',
+          message: error.message,
+        });
+
+        summary.errors += 1;
+        summary.details.push({
+          email,
+          newsId: news.id,
+          title: news.title,
+          status: 'error',
+          message: error.message,
+        });
+      }
+    });
+  });
+
+  return summary;
+}
+
+function getNewsNotificationAudience_() {
+  const properties = PropertiesService.getScriptProperties();
+  const audience = String(properties.getProperty('NEWS_NOTIFICATION_AUDIENCE') || 'owners').trim().toLowerCase();
+
+  if (audience === 'all' || audience === 'todos') return 'all';
+  if (audience === 'owner' || audience === 'owners') return 'owners';
+  return 'owners';
+}
+
+function isUserInNewsAudience_(user, audience) {
+  if (audience === 'all') return true;
+  return String(user.role || '').trim().toLowerCase() === 'owner';
+}
+
 function getTransitArticles_() {
   const sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName(SHEETS.codigoTransito.name);
   const items = getRowsAsObjects_(sheet)
@@ -631,7 +1738,7 @@ function getPicoPlacaRules_() {
         activo: getValue_(row, ['activo', 'active', 'estado']),
         fechaInicio: formatSheetDate_(getValue_(row, ['fechaInicio', 'startDate'])),
         fechaFin: formatSheetDate_(getValue_(row, ['fechaFin', 'endDate'])),
-        nota: getValue_(row, ['nota', 'observacion']) || 'Reglas cargadas desde Google Sheets.',
+        nota: getValue_(row, ['nota', 'observacion']) || 'Reglas actualizadas.',
         fuenteOficial: getValue_(row, ['fuenteOficial', 'fuente', 'officialSource']) || '',
         urlFuente: getValue_(row, ['urlFuente', 'url', 'sourceUrl']) || '',
       };
@@ -642,7 +1749,7 @@ function getPicoPlacaRules_() {
 }
 
 function installDailyReminderTrigger() {
-  setupCopilotSheets();
+  setupCopilotConfig();
 
   const handlerName = 'sendDailyReminderEmails';
   const removed = removeTriggersByHandlerNames_([
@@ -707,15 +1814,17 @@ function removeTriggersByHandlerNames_(handlerNames) {
 }
 
 function sendDailyReminderEmails() {
-  setupCopilotSheets();
+  setupCopilotConfig();
 
   const documentSummary = runReminderJob_('sendDocumentExpiryReminders', () => sendDocumentExpiryReminders({ skipSetup: true }));
   const picoPlacaSummary = runReminderJob_('sendPicoPlacaReminders', () => sendPicoPlacaReminders({ skipSetup: true }));
+  const newsSummary = runReminderJob_('sendNewsPublicationNotifications', () => sendNewsPublicationNotifications({ skipSetup: true }));
 
   return {
-    ok: Boolean(documentSummary.ok && picoPlacaSummary.ok),
+    ok: Boolean(documentSummary.ok && picoPlacaSummary.ok && newsSummary.ok),
     documentSummary,
     picoPlacaSummary,
+    newsSummary,
   };
 }
 
@@ -729,13 +1838,14 @@ function runReminderJob_(action, callback) {
 }
 
 function sendDocumentExpiryReminders(options) {
-  if (!options || !options.skipSetup) setupCopilotSheets();
+  if (!options || !options.skipSetup) setupCopilotConfig();
 
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   const vehicleSheet = ensureSheet_(ss, SHEETS.vehiculos.name, SHEETS.vehiculos.headers);
   const logSheet = ensureSheet_(ss, SHEETS.correosVencimientos.name, SHEETS.correosVencimientos.headers);
   const vehicles = getRowsAsObjects_(vehicleSheet);
   const usersByEmail = buildUsersByEmail_(ss);
+  const cdaConfigsByCode = buildCdaConfigsByCode_(ss);
   const sentKeys = getSentDocumentReminderKeys_(logSheet);
   const today = getTodayDateOnly_();
   const summary = {
@@ -776,6 +1886,7 @@ function sendDocumentExpiryReminders(options) {
 
       const user = usersByEmail[email] || {};
       const userName = user.nombre || user.name || email;
+      const allyBranding = buildAllyBrandingForUser_(user, cdaConfigsByCode);
       const reminder = buildDocumentReminderEmail_({
         definition,
         email,
@@ -784,15 +1895,16 @@ function sendDocumentExpiryReminders(options) {
         expiryDate,
         daysRemaining,
         reminderType,
+        allyBranding,
       });
 
       try {
-        MailApp.sendEmail({
+        sendTransactionalEmail_({
           to: email,
           subject: reminder.subject,
           body: reminder.plainBody,
           htmlBody: reminder.htmlBody,
-          name: 'Copiloto',
+          name: EMAIL_DEFAULT_FROM_NAME,
         });
 
         appendDocumentReminderLog_(logSheet, {
@@ -850,13 +1962,14 @@ function sendDocumentExpiryReminders(options) {
 }
 
 function sendPicoPlacaReminders(options) {
-  if (!options || !options.skipSetup) setupCopilotSheets();
+  if (!options || !options.skipSetup) setupCopilotConfig();
 
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   const vehicleSheet = ensureSheet_(ss, SHEETS.vehiculos.name, SHEETS.vehiculos.headers);
   const logSheet = ensureSheet_(ss, SHEETS.correosPicoPlaca.name, SHEETS.correosPicoPlaca.headers);
   const vehicles = getRowsAsObjects_(vehicleSheet);
   const usersByEmail = buildUsersByEmail_(ss);
+  const cdaConfigsByCode = buildCdaConfigsByCode_(ss);
   const sentKeys = getSentReminderKeys_(logSheet);
   const picoRules = normalizePicoRules_(getPicoPlacaRules_().items || []);
   const today = getTodayDateOnly_();
@@ -901,6 +2014,7 @@ function sendPicoPlacaReminders(options) {
 
     const user = usersByEmail[email] || {};
     const userName = user.nombre || user.name || email;
+    const allyBranding = buildAllyBrandingForUser_(user, cdaConfigsByCode);
     const reminder = buildPicoPlacaReminderEmail_({
       email,
       userName,
@@ -911,15 +2025,16 @@ function sendPicoPlacaReminders(options) {
       rule: result.rule,
       digit: result.digit,
       restrictionText: result.restrictionText,
+      allyBranding,
     });
 
     try {
-      MailApp.sendEmail({
+      sendTransactionalEmail_({
         to: email,
         subject: reminder.subject,
         body: reminder.plainBody,
         htmlBody: reminder.htmlBody,
-        name: 'Copiloto',
+        name: EMAIL_DEFAULT_FROM_NAME,
       });
 
       appendPicoPlacaReminderLog_(logSheet, {
@@ -991,6 +2106,40 @@ function buildUsersByEmail_(ss) {
   return usersByEmail;
 }
 
+function buildCdaConfigsByCode_(ss) {
+  const sheet = ensureSheet_(ss, SHEETS.cdaAliados.name, SHEETS.cdaAliados.headers);
+  const configs = {};
+
+  getRowsAsObjects_(sheet).forEach((row) => {
+    const code = normalizeHeader_(row.codigoAliado || '');
+    if (!code || !isActive_(row.activo)) return;
+    configs[code] = row;
+  });
+
+  return configs;
+}
+
+function buildAllyBrandingForUser_(user, cdaConfigsByCode) {
+  const code = String(user.codigoAliado || '').trim();
+  const config = cdaConfigsByCode[normalizeHeader_(code)] || {};
+  const cdaName = String(user.nombreCDA || config.nombreCDA || '').trim();
+
+  if (!cdaName) return null;
+
+  return {
+    idCDA: String(user.idCDA || config.idCDA || '').trim(),
+    codigoAliado: code || String(config.codigoAliado || '').trim(),
+    nombreCDA: cdaName,
+    logoCdaUrl: String(user.logoCdaUrl || config.logoCdaUrl || '').trim(),
+    templates: {
+      welcome: String(user.plantillaBienvenida || config.plantillaBienvenida || DEFAULT_ALLY_EMAIL_TEMPLATES.welcome),
+      documentReminder: String(user.plantillaVencimiento || config.plantillaVencimiento || DEFAULT_ALLY_EMAIL_TEMPLATES.documentReminder),
+      picoPlaca: String(user.plantillaPicoPlaca || config.plantillaPicoPlaca || DEFAULT_ALLY_EMAIL_TEMPLATES.picoPlaca),
+      importantAlert: String(user.plantillaAlerta || config.plantillaAlerta || DEFAULT_ALLY_EMAIL_TEMPLATES.importantAlert),
+    },
+  };
+}
+
 function getSentDocumentReminderKeys_(logSheet) {
   return getSentReminderKeys_(logSheet);
 }
@@ -1043,15 +2192,147 @@ function appendPicoPlacaReminderLog_(sheet, item) {
   ]);
 }
 
+function appendNewsPublicationLog_(sheet, item) {
+  const news = item.news || {};
+  sheet.appendRow([
+    new Date().toISOString(),
+    item.notificationKey || '',
+    item.email || '',
+    item.userName || '',
+    news.id || '',
+    news.section || '',
+    news.title || '',
+    news.date || '',
+    item.status || '',
+    item.message || '',
+  ]);
+}
+
+function buildNewsPublicationEmail_(context) {
+  const news = context.news || {};
+  const safeName = escapeHtml_(context.userName || context.email);
+  const safeTitle = escapeHtml_(news.title || 'Nueva publicacion');
+  const safeDescription = escapeHtml_(news.description || 'Hay una nueva publicacion disponible en ' + APP_NAME + '.');
+  const safeSection = escapeHtml_(news.section || 'Novedades');
+  const safeCategory = escapeHtml_(news.category || 'General');
+  const newsDate = parseSheetDateOnly_(news.date) || new Date();
+  const safeDate = escapeHtml_(formatDateForEmail_(newsDate));
+  const safeUrl = escapeHtml_(APP_PUBLIC_URL);
+  const imageHtml = isPublicHttpsUrl_(news.imageUrl)
+    ? '<img src="' + escapeHtml_(news.imageUrl) + '" alt="' + safeTitle + '" style="width:100%;max-height:260px;object-fit:cover;display:block;border-radius:18px;margin:0 0 22px;">'
+    : '';
+  const videoHtml = isPublicHttpsUrl_(news.videoUrl)
+    ? '<p style="margin:0 0 18px;font-size:14px;color:#2563eb;font-weight:bold;"><a href="' + escapeHtml_(news.videoUrl) + '" style="color:#2563eb;text-decoration:none;">Ver video relacionado</a></p>'
+    : '';
+  const subject = 'Nueva publicacion en ' + APP_NAME + ': ' + (news.title || 'Novedades para conductores');
+  const htmlBody = `<!DOCTYPE html>
+<html lang="es">
+<body style="margin:0;padding:0;background:#f5f7fb;font-family:Arial,sans-serif;color:#1f2937;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="padding:24px 0;background:#f5f7fb;">
+    <tr>
+      <td align="center">
+        <table width="100%" cellpadding="0" cellspacing="0" style="max-width:620px;background:#ffffff;border-radius:18px;overflow:hidden;box-shadow:0 10px 28px rgba(15,23,42,.10);">
+          <tr>
+            <td align="center" style="padding:26px 20px 18px;background:#101828;">
+              <img src="${APP_LOGO_URL}"
+                   alt="${APP_NAME}"
+                   style="max-width:160px;height:auto;display:block;margin:auto;">
+              <p style="color:#d0d5dd;margin:14px 0 0;font-size:14px;">
+                Novedades para moverte con confianza
+              </p>
+            </td>
+          </tr>
+
+          <tr>
+            <td style="padding:30px 26px;">
+              <p style="font-size:17px;margin:0 0 16px;">
+                Hola <strong>${safeName}</strong>,
+              </p>
+
+              <p style="margin:0 0 14px;color:#2563eb;font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;">
+                ${safeSection} · ${safeCategory} · ${safeDate}
+              </p>
+
+              ${imageHtml}
+
+              <h1 style="font-size:26px;line-height:1.2;margin:0 0 14px;color:#101828;">
+                ${safeTitle}
+              </h1>
+
+              <p style="font-size:16px;line-height:1.7;color:#475467;margin:0 0 22px;">
+                ${safeDescription}
+              </p>
+
+              ${videoHtml}
+
+              <div style="text-align:center;margin:28px 0;">
+                <a href="${safeUrl}"
+                   style="background:#2563eb;color:#ffffff;text-decoration:none;padding:14px 24px;border-radius:12px;font-size:16px;font-weight:bold;display:inline-block;">
+                  Abrir en ${APP_NAME}
+                </a>
+              </div>
+            </td>
+          </tr>
+
+          <tr>
+            <td style="background:#101828;padding:18px 24px;text-align:center;font-size:12px;color:#d0d5dd;">
+              &copy; ${new Date().getFullYear()} ${APP_NAME}. Mensaje autom&aacute;tico de novedades.
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+
+  return {
+    subject,
+    htmlBody,
+    plainBody: [
+      'Hola ' + (context.userName || context.email) + ',',
+      '',
+      'Nueva publicacion en ' + APP_NAME + ':',
+      news.title || 'Novedades para conductores',
+      '',
+      news.description || '',
+      '',
+      'Seccion: ' + (news.section || 'Novedades'),
+      'Categoria: ' + (news.category || 'General'),
+      'Fecha: ' + (news.date || ''),
+      news.videoUrl ? 'Video: ' + news.videoUrl : '',
+      '',
+      'Abrir ' + APP_NAME + ': ' + APP_PUBLIC_URL,
+    ].filter(Boolean).join('\n'),
+  };
+}
+
 function buildDocumentReminderEmail_(context) {
   const copy = getDocumentReminderCopy_(context.definition, context.daysRemaining);
   const expiryDateText = formatDateForEmail_(context.expiryDate);
   const safeName = escapeHtml_(context.userName || context.email);
   const safePlate = escapeHtml_(context.plate || 'Sin placa');
   const safeUrl = escapeHtml_(APP_PUBLIC_URL);
+  const ally = normalizeAllyBranding_(context.allyBranding);
+  const allyMessage = ally
+    ? renderAllyTemplate_(ally.templates.documentReminder, {
+        nombreCDA: ally.nombreCDA,
+        codigoAliado: ally.codigoAliado,
+        nombreCliente: context.userName || context.email,
+        documento: context.definition.plainName,
+        diasRestantes: context.daysRemaining,
+        placa: context.plate || 'Sin placa',
+        fecha: expiryDateText,
+      })
+    : '';
   const htmlBody = buildDocumentReminderHtml_({
     nombreUsuario: safeName,
     placaVehiculo: safePlate,
+    mensajeAliadoHtml: ally
+      ? escapeHtml_(allyMessage)
+      : 'Te recordamos que ' + context.definition.articleHtml + ' ' + context.definition.htmlName + ' del veh&iacute;culo con placa <strong style="color:#101828;">' + safePlate + '</strong> requiere tu atenci&oacute;n.',
+    allyHeaderHtml: ally ? buildAllyHeaderHtml_(ally) : '',
+    footerText: ally ? 'Powered By ' + APP_NAME : '&copy; ' + new Date().getFullYear() + ' ' + APP_NAME + '. Mensaje autom&aacute;tico de recordatorio.',
     articuloDocumento: context.definition.articleHtml,
     documentoHtml: context.definition.htmlLabel,
     nombreDocumentoHtml: context.definition.htmlName,
@@ -1070,7 +2351,7 @@ function buildDocumentReminderEmail_(context) {
   });
 
   return {
-    subject: copy.subject,
+    subject: ally ? ally.nombreCDA + ' + ' + APP_NAME + ': ' + copy.subject : copy.subject,
     htmlBody,
     plainBody: buildDocumentReminderPlainBody_({
       userName: context.userName || context.email,
@@ -1081,6 +2362,8 @@ function buildDocumentReminderEmail_(context) {
       expiryDateText,
       daysRemaining: context.daysRemaining,
       urlApp: APP_PUBLIC_URL,
+      allyMessage,
+      poweredBy: ally ? 'Powered By ' + APP_NAME : '',
     }),
   };
 }
@@ -1095,12 +2378,13 @@ function buildDocumentReminderHtml_(values) {
         <table width="100%" cellpadding="0" cellspacing="0" style="max-width:620px;background:#ffffff;border-radius:18px;overflow:hidden;box-shadow:0 10px 28px rgba(15,23,42,.10);">
           <tr>
             <td align="center" style="padding:26px 20px 14px;background:#101828;">
-              <img src="https://drive.google.com/uc?export=view&id=1_zZKKMRnFKYhQ4Renm1wIon9HV714C3I"
-                   alt="Copiloto"
+              <img src="${APP_LOGO_URL}"
+                   alt="${APP_NAME}"
                    style="max-width:160px;height:auto;display:block;margin:auto;">
               <p style="color:#d0d5dd;margin:14px 0 0;font-size:14px;">
                 Tu asistente inteligente para conducir tranquilo
               </p>
+              {{allyHeaderHtml}}
             </td>
           </tr>
 
@@ -1111,8 +2395,7 @@ function buildDocumentReminderHtml_(values) {
               </p>
 
               <p style="font-size:16px;line-height:1.6;margin:0 0 18px;">
-                Te recordamos que {{articuloDocumento}} {{nombreDocumentoHtml}} del veh&iacute;culo con placa
-                <strong style="color:#101828;">{{placaVehiculo}}</strong> requiere tu atenci&oacute;n.
+                {{mensajeAliadoHtml}}
               </p>
 
               <div style="background:{{badgeBackground}};border:2px solid {{badgeBorder}};border-radius:18px;padding:24px;text-align:center;margin:24px 0;">
@@ -1144,7 +2427,7 @@ function buildDocumentReminderHtml_(values) {
               <div style="text-align:center;margin:28px 0;">
                 <a href="{{urlApp}}"
                    style="background:#101828;color:#ffffff;text-decoration:none;padding:14px 24px;border-radius:12px;font-size:16px;font-weight:bold;display:inline-block;">
-                  Revisar en Copiloto
+                  Revisar en ${APP_NAME}
                 </a>
               </div>
 
@@ -1155,14 +2438,14 @@ function buildDocumentReminderHtml_(values) {
           <tr>
             <td>
               <img src="https://drive.google.com/uc?export=view&id=1_01IYLdW1UCGA2DVsf0Wr6FjXKymIvFC"
-                   alt="Copiloto"
+                   alt="${APP_NAME}"
                    style="width:100%;display:block;height:auto;">
             </td>
           </tr>
 
           <tr>
             <td style="background:#101828;padding:18px 24px;text-align:center;font-size:12px;color:#d0d5dd;">
-              &copy; {{anio}} Copiloto. Mensaje autom&aacute;tico de recordatorio.
+              {{footerText}}
             </td>
           </tr>
         </table>
@@ -1213,7 +2496,7 @@ function getDocumentReminderCopy_(definition, daysRemaining) {
   if (daysRemaining < 0) {
     const daysValue = String(Math.abs(daysRemaining));
     return {
-      subject: 'Documento vencido en Copiloto: ' + definition.label,
+      subject: 'Documento vencido en ' + APP_NAME + ': ' + definition.label,
       badgeTitle: 'DOCUMENTO VENCIDO',
       daysValue,
       daysUnit: Math.abs(daysRemaining) === 1 ? 'd&iacute;a' : 'd&iacute;as',
@@ -1240,7 +2523,7 @@ function getDocumentReminderCopy_(definition, daysRemaining) {
   }
 
   return {
-    subject: 'Recordatorio Copiloto: ' + definition.label + ' proximo a vencer',
+    subject: 'Recordatorio ' + APP_NAME + ': ' + definition.label + ' proximo a vencer',
     badgeTitle: 'RECORDATORIO IMPORTANTE',
     daysValue: String(daysRemaining),
     daysUnit: daysRemaining === 1 ? 'd&iacute;a' : 'd&iacute;as',
@@ -1262,10 +2545,11 @@ function buildDocumentReminderPlainBody_(values) {
   return [
     'Hola ' + values.userName + ',',
     '',
-    'Te recordamos que ' + values.documentArticle + ' ' + values.documentName + ' del vehiculo con placa ' + values.plate + ' ' + statusText + '.',
+    values.allyMessage || ('Te recordamos que ' + values.documentArticle + ' ' + values.documentName + ' del vehiculo con placa ' + values.plate + ' ' + statusText + '.'),
     'Fecha de vencimiento: ' + values.expiryDateText,
     '',
-    'Revisar en Copiloto: ' + values.urlApp,
+    'Revisar en ' + APP_NAME + ': ' + values.urlApp,
+    values.poweredBy || '',
   ].join('\n');
 }
 
@@ -1274,9 +2558,27 @@ function buildPicoPlacaReminderEmail_(context) {
   const schedule = formatPicoSchedule_(context.rule);
   const vehicleTypeText = formatPicoVehicleType_(context.vehicleType);
   const dateText = formatDateForEmail_(context.date);
+  const ally = normalizeAllyBranding_(context.allyBranding);
+  const allyMessage = ally
+    ? renderAllyTemplate_(ally.templates.picoPlaca, {
+        nombreCDA: ally.nombreCDA,
+        codigoAliado: ally.codigoAliado,
+        nombreCliente: context.userName || context.email,
+        placa: context.plate || 'Sin placa',
+        ciudad: context.city || '',
+        fecha: dateText,
+        diasRestantes: '',
+        documento: 'pico y placa',
+      })
+    : '';
   const htmlBody = buildPicoPlacaReminderHtml_({
     nombreUsuario: escapeHtml_(context.userName || context.email),
     placaVehiculo: escapeHtml_(context.plate || 'Sin placa'),
+    mensajeAliadoHtml: ally
+      ? escapeHtml_(allyMessage)
+      : 'Hoy el veh&iacute;culo con placa <strong style="color:#101828;">' + escapeHtml_(context.plate || 'Sin placa') + '</strong> tiene restricci&oacute;n de pico y placa en <strong>' + escapeHtml_(context.city || '') + '</strong>.',
+    allyHeaderHtml: ally ? buildAllyHeaderHtml_(ally) : '',
+    footerText: ally ? 'Powered By ' + APP_NAME : '&copy; ' + new Date().getFullYear() + ' ' + APP_NAME + '. Mensaje autom&aacute;tico de recordatorio.',
     ciudad: escapeHtml_(context.city || ''),
     tipoVehiculo: escapeHtml_(vehicleTypeText),
     fechaRestriccion: escapeHtml_(dateText),
@@ -1288,7 +2590,7 @@ function buildPicoPlacaReminderEmail_(context) {
   });
 
   return {
-    subject: 'Pico y placa hoy para ' + context.plate,
+    subject: ally ? ally.nombreCDA + ' + ' + APP_NAME + ': Pico y placa hoy para ' + context.plate : 'Pico y placa hoy para ' + context.plate,
     htmlBody,
     plainBody: buildPicoPlacaReminderPlainBody_({
       userName: context.userName || context.email,
@@ -1300,6 +2602,8 @@ function buildPicoPlacaReminderEmail_(context) {
       restrictionText: context.restrictionText || formatPicoRestriction_(context.rule),
       digit: context.digit,
       urlApp: APP_PUBLIC_URL,
+      allyMessage,
+      poweredBy: ally ? 'Powered By ' + APP_NAME : '',
     }),
   };
 }
@@ -1314,12 +2618,13 @@ function buildPicoPlacaReminderHtml_(values) {
         <table width="100%" cellpadding="0" cellspacing="0" style="max-width:620px;background:#ffffff;border-radius:18px;overflow:hidden;box-shadow:0 10px 28px rgba(15,23,42,.10);">
           <tr>
             <td align="center" style="padding:26px 20px 14px;background:#101828;">
-              <img src="https://drive.google.com/uc?export=view&id=1_zZKKMRnFKYhQ4Renm1wIon9HV714C3I"
-                   alt="Copiloto"
+              <img src="${APP_LOGO_URL}"
+                   alt="${APP_NAME}"
                    style="max-width:160px;height:auto;display:block;margin:auto;">
               <p style="color:#d0d5dd;margin:14px 0 0;font-size:14px;">
                 Tu asistente inteligente para conducir tranquilo
               </p>
+              {{allyHeaderHtml}}
             </td>
           </tr>
 
@@ -1330,8 +2635,7 @@ function buildPicoPlacaReminderHtml_(values) {
               </p>
 
               <p style="font-size:16px;line-height:1.6;margin:0 0 18px;">
-                Hoy el veh&iacute;culo con placa <strong style="color:#101828;">{{placaVehiculo}}</strong>
-                tiene restricci&oacute;n de pico y placa en <strong>{{ciudad}}</strong>.
+                {{mensajeAliadoHtml}}
               </p>
 
               <div style="background:#fff4e5;border:2px solid #f97316;border-radius:18px;padding:24px;text-align:center;margin:24px 0;">
@@ -1365,7 +2669,7 @@ function buildPicoPlacaReminderHtml_(values) {
               <div style="text-align:center;margin:28px 0;">
                 <a href="{{urlApp}}"
                    style="background:#101828;color:#ffffff;text-decoration:none;padding:14px 24px;border-radius:12px;font-size:16px;font-weight:bold;display:inline-block;">
-                  Revisar en Copiloto
+                  Revisar en ${APP_NAME}
                 </a>
               </div>
             </td>
@@ -1373,7 +2677,7 @@ function buildPicoPlacaReminderHtml_(values) {
 
           <tr>
             <td style="background:#101828;padding:18px 24px;text-align:center;font-size:12px;color:#d0d5dd;">
-              &copy; {{anio}} Copiloto. Mensaje autom&aacute;tico de recordatorio.
+              {{footerText}}
             </td>
           </tr>
         </table>
@@ -1390,15 +2694,52 @@ function buildPicoPlacaReminderPlainBody_(values) {
   return [
     'Hola ' + values.userName + ',',
     '',
-    'Hoy tienes pico y placa para el vehiculo con placa ' + values.plate + ' en ' + values.city + '.',
+    values.allyMessage || ('Hoy tienes pico y placa para el vehiculo con placa ' + values.plate + ' en ' + values.city + '.'),
     'Fecha: ' + values.dateText,
     'Vehiculo: ' + values.vehicleType,
     'Horario: ' + values.schedule,
     'Restriccion: ' + values.restrictionText,
     'Digito evaluado: ' + values.digit,
     '',
-    'Revisar en Copiloto: ' + values.urlApp,
+    'Revisar en ' + APP_NAME + ': ' + values.urlApp,
+    values.poweredBy || '',
   ].join('\n');
+}
+
+function normalizeAllyBranding_(branding) {
+  if (!branding || !branding.nombreCDA) return null;
+
+  return {
+    idCDA: String(branding.idCDA || '').trim(),
+    codigoAliado: String(branding.codigoAliado || '').trim(),
+    nombreCDA: String(branding.nombreCDA || '').trim(),
+    logoCdaUrl: isPublicHttpsUrl_(branding.logoCdaUrl) ? String(branding.logoCdaUrl).trim() : '',
+    templates: {
+      welcome: String((branding.templates && branding.templates.welcome) || DEFAULT_ALLY_EMAIL_TEMPLATES.welcome),
+      documentReminder: String((branding.templates && branding.templates.documentReminder) || DEFAULT_ALLY_EMAIL_TEMPLATES.documentReminder),
+      picoPlaca: String((branding.templates && branding.templates.picoPlaca) || DEFAULT_ALLY_EMAIL_TEMPLATES.picoPlaca),
+      importantAlert: String((branding.templates && branding.templates.importantAlert) || DEFAULT_ALLY_EMAIL_TEMPLATES.importantAlert),
+    },
+  };
+}
+
+function buildAllyHeaderHtml_(ally) {
+  const logoHtml = ally.logoCdaUrl
+    ? '<img src="' + escapeHtml_(ally.logoCdaUrl) + '" alt="' + escapeHtml_(ally.nombreCDA) + '" style="max-width:130px;max-height:54px;height:auto;display:block;margin:16px auto 0;">'
+    : '';
+
+  return logoHtml + '<p style="color:#d0d5dd;margin:12px 0 0;font-size:13px;font-weight:bold;">' + escapeHtml_(ally.nombreCDA) + ' en alianza con ' + APP_NAME + '</p>';
+}
+
+function renderAllyTemplate_(template, values) {
+  return String(template || '').replace(/\{(\w+)\}/g, function(match, key) {
+    if (!Object.prototype.hasOwnProperty.call(values, key)) return '';
+    return values[key] === null || typeof values[key] === 'undefined' ? '' : String(values[key]);
+  });
+}
+
+function isPublicHttpsUrl_(value) {
+  return /^https:\/\/[^\s]+$/i.test(String(value || '').trim());
 }
 
 function fillTemplate_(template, values) {
@@ -1414,6 +2755,11 @@ function buildDocumentReminderKey_(email, vehicleId, plate, documentKey, expiryD
 
 function buildPicoPlacaReminderKey_(email, vehicleId, plate, city, vehicleType, dateKey) {
   return [email, vehicleId || plate, 'pico_placa', city, vehicleType, dateKey].join('|').toLowerCase();
+}
+
+function buildNewsPublicationKey_(email, news) {
+  const newsId = news && news.id ? news.id : [news && news.title, news && news.date].join('|');
+  return [email, 'news', newsId].join('|').toLowerCase();
 }
 
 function evaluatePicoPlacaForVehicle_(context) {
@@ -1801,6 +3147,29 @@ function parseBoolean_(value) {
   if (value === true) return true;
   const text = String(value || '').trim().toLowerCase();
   return text === 'true' || text === 'si' || text === 'sí' || text === '1';
+}
+
+function parseFalseFlag_(value) {
+  if (value === false) return true;
+  const text = String(value || '').trim().toLowerCase();
+  return text === 'false' || text === 'no' || text === '0';
+}
+
+function shouldRequirePasswordChange_(user) {
+  if (parseFalseFlag_(user.mustChangePassword) || parseFalseFlag_(user.passwordChangeRequired)) return false;
+  if (parseBoolean_(user.mustChangePassword) || parseBoolean_(user.passwordChangeRequired)) return true;
+  if (user.passwordUpdatedAt) return false;
+
+  const source = String(user.source || '').trim().toLowerCase();
+  const code = String(user.codigoAliado || '').trim().toUpperCase();
+  const hasAlly = Boolean(user.idCDA || (code && code !== 'SIN-ALIADO'));
+  const temporarySource = ['manual-caja', 'pre-registro', 'caja', 'cda-caja', 'ally-driver-login'].indexOf(source) >= 0;
+
+  return hasAlly || temporarySource;
+}
+
+function isPasswordChangeRequiredForUser_(user) {
+  return !user.passwordUpdatedAt && shouldRequirePasswordChange_(user);
 }
 
 function isActive_(value) {

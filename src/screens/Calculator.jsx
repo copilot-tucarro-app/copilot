@@ -8,6 +8,7 @@ import {
   WalletCards,
 } from "lucide-react";
 import { useState } from "react";
+import BackToCenterButton from "../components/BackToCenterButton";
 import Card from "../components/Card";
 import Header from "../components/Header";
 import {
@@ -39,7 +40,7 @@ const calculatorTabs = [
   { id: "savings", label: "Ahorro", icon: PiggyBank },
 ];
 
-export default function Calculator({ user, onLogout }) {
+export default function Calculator({ user, onLogout, onNavigate }) {
   const vehicle = getVehicle(user);
   const defaultAutonomy = vehicle?.autonomyPerGallon || "38";
   const [activeCalculator, setActiveCalculator] = useState("fuelMoney");
@@ -87,7 +88,13 @@ export default function Calculator({ user, onLogout }) {
 
   return (
     <main className="screen-shell scroll-smooth">
-      <Header user={user} onLogout={onLogout} title="Calculadora" subtitle="Calcula gastos, gasolina y costos de viaje." />
+      <Header
+        user={user}
+        onLogout={onLogout}
+        title="Calculadora"
+        subtitle="Calcula gastos, gasolina y costos de viaje."
+        backAction={<BackToCenterButton onNavigate={onNavigate} />}
+      />
 
       <section className="mb-5 overflow-hidden rounded-[2rem] bg-slate-950 text-white shadow-soft">
         <div className="relative p-5">
@@ -115,7 +122,7 @@ export default function Calculator({ user, onLogout }) {
               key={tab.id}
               onClick={() => setActiveCalculator(tab.id)}
               className={`flex min-w-[6.5rem] items-center justify-center gap-2 rounded-2xl px-3 py-3 text-xs font-black transition duration-200 ${
-                active ? "bg-blue-600 text-white shadow-lift" : "text-slate-500 hover:bg-blue-50 hover:text-blue-700"
+                active ? "bg-black text-white shadow-[0_12px_30px_rgba(0,0,0,0.22)]" : "text-slate-500 hover:bg-slate-100 hover:text-slate-950"
               }`}
             >
               <Icon size={17} />

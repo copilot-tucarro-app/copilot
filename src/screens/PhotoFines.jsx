@@ -1,5 +1,6 @@
 import { Camera, Gauge, MapPin, Navigation, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import BackToCenterButton from "../components/BackToCenterButton";
 import Card from "../components/Card";
 import Header from "../components/Header";
 import StatusBadge from "../components/StatusBadge";
@@ -16,7 +17,7 @@ function getInitialPhotoFines() {
   return cachedResult?.ok && cachedResult.items?.length ? cachedResult.items : photoDetectionCameras;
 }
 
-export default function PhotoFines({ user, onLogout }) {
+export default function PhotoFines({ user, onLogout, onNavigate }) {
   const [query, setQuery] = useState("");
   const [cameras, setCameras] = useState(() => getInitialPhotoFines());
 
@@ -27,7 +28,7 @@ export default function PhotoFines({ user, onLogout }) {
           setCameras(result.items);
         }
       })
-      .catch((error) => console.warn("No se pudieron cargar cámaras desde Sheets", error));
+      .catch((error) => console.warn("No se pudieron cargar cámaras remotas", error));
   }, []);
 
   const filteredCameras = useMemo(() => {
@@ -38,7 +39,13 @@ export default function PhotoFines({ user, onLogout }) {
 
   return (
     <main className="screen-shell">
-      <Header user={user} onLogout={onLogout} title="Fotomultas" subtitle="Galería simulada de cámaras de fotodetección del Valle de Aburrá." />
+      <Header
+        user={user}
+        onLogout={onLogout}
+        title="Fotomultas"
+        subtitle="Galería simulada de cámaras de fotodetección del Valle de Aburrá."
+        backAction={<BackToCenterButton onNavigate={onNavigate} />}
+      />
 
       <Card className="mb-5 p-4">
         <label className="block">
@@ -75,7 +82,7 @@ export default function PhotoFines({ user, onLogout }) {
                   href={getMapsUrl(camera.coordinates)}
                   target="_blank"
                   rel="noreferrer"
-                  className="mt-4 flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl bg-blue-600 px-4 py-3 text-sm font-black text-white shadow-lift transition hover:-translate-y-0.5 hover:bg-blue-700"
+                  className="mt-4 flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl bg-black px-4 py-3 text-sm font-black text-white shadow-[0_16px_36px_rgba(0,0,0,0.26)] transition hover:-translate-y-0.5 hover:bg-neutral-900"
                   aria-label={`Abrir ubicación en Google Maps de ${polishSpanishText(camera.address)}`}
                 >
                   <Navigation size={18} />

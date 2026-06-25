@@ -1,5 +1,6 @@
 import { BookOpen, ListChecks, Maximize2, Search, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import BackToCenterButton from "../components/BackToCenterButton";
 import Card from "../components/Card";
 import Header from "../components/Header";
 import StatusBadge from "../components/StatusBadge";
@@ -9,10 +10,10 @@ import { polishSpanishText } from "../utils/textUtils";
 
 function getInitialTransitArticles() {
   const cachedResult = getCachedTransitArticlesFromSheet();
-  return cachedResult?.ok && cachedResult.items?.length ? cachedResult.items : transitArticles;
+  return normalizeTransitArticles(cachedResult?.ok && cachedResult.items?.length ? cachedResult.items : transitArticles);
 }
 
-export default function TransitCode({ user, onLogout }) {
+export default function TransitCode({ user, onLogout, onNavigate }) {
   const [query, setQuery] = useState("");
   const [articles, setArticles] = useState(() => getInitialTransitArticles());
   const [selectedArticle, setSelectedArticle] = useState(null);
@@ -21,26 +22,30 @@ export default function TransitCode({ user, onLogout }) {
     refreshTransitArticlesFromSheet()
       .then((result) => {
         if (result?.ok && result.items?.length) {
-          setArticles(result.items);
+          setArticles(normalizeTransitArticles(result.items));
         }
       })
-      .catch((error) => console.warn("No se pudo cargar código de tránsito desde Sheets", error));
+      .catch((error) => console.warn("No se pudo cargar código de tránsito remoto", error));
   }, []);
 
   const filteredArticles = useMemo(() => {
     const text = normalizeSearchText(query);
     if (!text) return articles;
     return articles.filter((article) => {
-      const haystack = normalizeSearchText(
-        `${article.article} ${article.title} ${article.summary} ${getDetailParagraphs(article).join(" ")} ${getRecommendations(article).join(" ")} ${getKeywords(article).join(" ")}`,
-      );
+      const haystack = getArticleSearchText(article);
       return haystack.includes(text);
     });
   }, [articles, query]);
 
   return (
     <main className="screen-shell">
-      <Header user={user} onLogout={onLogout} title="Código de Tránsito" subtitle="Busca conceptos frecuentes sin salir de la app." />
+      <Header
+        user={user}
+        onLogout={onLogout}
+        title="Código de Tránsito"
+        subtitle="Busca conceptos frecuentes sin salir de la app."
+        backAction={<BackToCenterButton onNavigate={onNavigate} />}
+      />
 
       <Card className="mb-5 p-4">
         <label className="block">
@@ -122,20 +127,24 @@ function TransitArticleDetailModal({ article, onClose }) {
           </button>
         </div>
 
-        <div className="bg-slate-950 p-5 text-white">
-          <div className="flex items-start gap-4">
-            <div className="grid size-14 shrink-0 place-items-center rounded-3xl bg-blue-600 text-white shadow-lift">
-              <BookOpen size={24} />
+        <div className="bg-slate-950 px-5 py-8 text-center text-white sm:px-8 sm:py-10">
+          <div className="mx-auto flex max-w-xl flex-col items-center">
+            <div className="mb-4 grid size-16 place-items-center rounded-3xl bg-blue-600 text-white shadow-lift">
+              <BookOpen size={28} />
             </div>
-            <div className="min-w-0">
-              <StatusBadge tone="info">{article.article}</StatusBadge>
-              <h3 className="mt-3 text-2xl font-black leading-tight">{polishSpanishText(article.title)}</h3>
-              <p className="mt-2 text-sm leading-6 text-slate-300">{polishSpanishText(article.summary)}</p>
-            </div>
+            <StatusBadge tone="info">{article.article}</StatusBadge>
+            <h3 className="mt-4 text-3xl font-black leading-tight sm:text-4xl">{polishSpanishText(article.title)}</h3>
           </div>
         </div>
 
         <div className="grid gap-4 p-5">
+          {article.summary ? (
+            <section className="rounded-3xl bg-slate-50 p-4 ring-1 ring-slate-100">
+              <h4 className="text-sm font-black uppercase tracking-wide text-slate-500">Descripción</h4>
+              <p className="mt-3 text-sm leading-7 text-slate-600">{polishSpanishText(article.summary)}</p>
+            </section>
+          ) : null}
+
           <section>
             <h4 className="text-sm font-black uppercase tracking-wide text-slate-500">Más información</h4>
             <div className="mt-3 space-y-3">
@@ -182,6 +191,49 @@ function TransitArticleDetailModal({ article, onClose }) {
   );
 }
 
+function normalizeTransitArticles(items = []) {
+  return items.map(normalizeTransitArticle).filter((article) => article.article || article.title || article.summary);
+}
+
+function normalizeTransitArticle(item = {}, index) {
+  return {
+    ...item,
+    id: pickArticleField(item, ["id", "codigo", "codigoArticulo"]) || `art-${index}`,
+    article: pickArticleField(item, ["article", "articulo", "artículo", "numeroArticulo", "numero"]) || "",
+    title: pickArticleField(item, ["title", "titulo", "título", "tema", "nombre"]) || "",
+    summary: pickArticleField(item, ["summary", "resumen", "descripcion", "descripción", "detalle", "texto"]) || "",
+    details: pickArticleField(item, ["details", "detail", "detalle", "detalles", "masInformacion", "más información", "informacion", "información", "moreInfo"]) || "",
+    recommendations: normalizeTextList(pickArticleField(item, ["recommendations", "recomendaciones", "consejos", "tips", "acciones"])),
+    keywords: normalizeTextList(pickArticleField(item, ["keywords", "palabrasClave", "palabras clave", "tags", "categoria", "categoría"])),
+  };
+}
+
+function pickArticleField(item, keys) {
+  const sourceKeys = Object.keys(item || {});
+
+  for (const key of keys) {
+    if (isPresent(item[key])) return item[key];
+
+    const normalizedKey = normalizeFieldKey(key);
+    const sourceKey = sourceKeys.find((candidate) => normalizeFieldKey(candidate) === normalizedKey);
+    if (sourceKey && isPresent(item[sourceKey])) return item[sourceKey];
+  }
+
+  return "";
+}
+
+function normalizeFieldKey(value = "") {
+  return String(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9]/g, "")
+    .toLowerCase();
+}
+
+function isPresent(value) {
+  return value !== null && typeof value !== "undefined" && value !== "";
+}
+
 function normalizeSearchText(value = "") {
   return String(value)
     .normalize("NFD")
@@ -190,12 +242,13 @@ function normalizeSearchText(value = "") {
     .trim();
 }
 
+function getArticleSearchText(article) {
+  return normalizeSearchText([article.article, article.title, article.summary, ...getDetailParagraphs(article), ...getRecommendations(article), ...getKeywords(article)].join(" "));
+}
+
 function getKeywords(article) {
   if (Array.isArray(article.keywords)) return article.keywords;
-  return String(article.keywords || "")
-    .split(/[,;\n]/)
-    .map((keyword) => keyword.trim())
-    .filter(Boolean);
+  return normalizeTextList(article.keywords);
 }
 
 function getDetailParagraphs(article) {
@@ -212,8 +265,23 @@ function getRecommendations(article) {
 }
 
 function splitTextList(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item || "").trim()).filter(Boolean);
+  }
+
   return String(value || "")
     .split(/\n|;/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function normalizeTextList(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item || "").trim()).filter(Boolean);
+  }
+
+  return String(value || "")
+    .split(/[,;\n]/)
     .map((item) => item.trim())
     .filter(Boolean);
 }

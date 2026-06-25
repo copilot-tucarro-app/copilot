@@ -1,5 +1,5 @@
 key	value	notes
-APP_NAME	COPILOT	Nombre comercial de la app
+APP_NAME	copilot360	Nombre comercial de la app
 APP_PUBLIC_URL	https://copilot-tucarro-app.github.io/copilot/	URL real de GitHub Pages
 DEFAULT_AGENT_PASSWORD	Copiloto123	Contraseña inicial para compradores registrados por agente
 OWNER_ACCESS_EMAIL	jrudas	Usuario dueño con módulo Agente de ventas

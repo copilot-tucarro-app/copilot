@@ -14,7 +14,7 @@ import {
   Trash2,
   Wrench,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Header from "../components/Header";
 import StatusBadge from "../components/StatusBadge";
 import { cityOptions, fuelOptions, vehicleTypeOptions } from "../data/mockData";
@@ -105,12 +105,13 @@ const documentRows = [
   },
 ];
 
-export default function Vehicle({ user, onLogout }) {
+export default function Vehicle({ user, onLogout, onUnsavedChange, onRegisterSave }) {
   const storedVehicle = useMemo(() => getInitialStoredVehicle(user), [user]);
   const [vehicle, setVehicleForm] = useState(storedVehicle || { ...defaultVehicle, id: createId("vehicle"), city: user?.city || "Medellin" });
   const [saved, setSaved] = useState(Boolean(storedVehicle));
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [syncMessage, setSyncMessage] = useState("");
-  const [openSection, setOpenSection] = useState("data");
+  const [openSection, setOpenSection] = useState("");
   const [isVehicleSyncing, setIsVehicleSyncing] = useState(Boolean(user?.email && !storedVehicle));
   const localMutationVersionRef = useRef(0);
   const vehicleRef = useRef(vehicle);
@@ -118,6 +119,37 @@ export default function Vehicle({ user, onLogout }) {
   useEffect(() => {
     vehicleRef.current = vehicle;
   }, [vehicle]);
+
+  const saveVehicle = useCallback(() => {
+    const currentVehicle = vehicleRef.current;
+    const normalizedVehicle = {
+      ...currentVehicle,
+      id: currentVehicle.id || createId("vehicle"),
+      plate: currentVehicle.plate.trim().toUpperCase(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    localMutationVersionRef.current += 1;
+    const savedVehicle = setVehicle(normalizedVehicle, user);
+    vehicleRef.current = savedVehicle;
+    const sheetSave = saveVehicleToSheet(omitLocalOnlyFields(savedVehicle), user).catch((error) => console.warn("No se pudo guardar vehículo remoto", error));
+    setVehicleForm(savedVehicle);
+    setSaved(true);
+    setHasUnsavedChanges(false);
+    setSyncMessage("Vehículo guardado y asociado a tu usuario.");
+
+    return sheetSave;
+  }, [user]);
+
+  useEffect(() => {
+    onUnsavedChange?.(hasUnsavedChanges);
+    return () => onUnsavedChange?.(false);
+  }, [hasUnsavedChanges, onUnsavedChange]);
+
+  useEffect(() => {
+    onRegisterSave?.(saveVehicle);
+    return () => onRegisterSave?.(null);
+  }, [onRegisterSave, saveVehicle]);
 
   useEffect(() => {
     if (!user?.email) return;
@@ -133,6 +165,7 @@ export default function Vehicle({ user, onLogout }) {
       const savedImmediateVehicle = setVehicle(mergeVehicleLocalOnlyFields(immediateVehicle, localVehicleAtStart), user);
       setVehicleForm(savedImmediateVehicle);
       setSaved(true);
+      setHasUnsavedChanges(false);
       setSyncMessage(cachedVehicleAtStart && !localVehicleAtStart ? "Vehículo cargado desde caché local." : "");
     }
 
@@ -146,14 +179,15 @@ export default function Vehicle({ user, onLogout }) {
           const newestVehicle = pickNewestVehicle(currentLocalVehicle, sheetVehicle);
 
           if (localMutationVersionRef.current !== syncStartVersion) {
-            setSyncMessage("Datos de Sheets disponibles. Conservamos los cambios locales recientes.");
+            setSyncMessage("Datos actualizados disponibles. Conservamos los cambios locales recientes.");
             return;
           }
 
           const savedSheetVehicle = setVehicle(newestVehicle, user);
           setVehicleForm(savedSheetVehicle);
           setSaved(true);
-          setSyncMessage(result.cacheHit ? "Vehículo cargado desde caché local." : "Vehículo cargado desde Google Sheets.");
+          setHasUnsavedChanges(false);
+          setSyncMessage(result.cacheHit ? "Vehículo cargado desde caché local." : "Vehículo actualizado.");
           return;
         }
 
@@ -163,7 +197,7 @@ export default function Vehicle({ user, onLogout }) {
       })
       .catch((error) => {
         if (!isActive) return;
-        console.warn("No se pudo cargar vehículo desde Google Sheets", error);
+        console.warn("No se pudo cargar vehículo remoto", error);
         setSyncMessage("Usando datos locales del vehículo.");
       })
       .finally(() => {
@@ -179,23 +213,12 @@ export default function Vehicle({ user, onLogout }) {
     localMutationVersionRef.current += 1;
     setVehicleForm((current) => ({ ...current, [field]: value }));
     setSaved(false);
+    setHasUnsavedChanges(true);
   }
 
   function submitVehicle(event) {
     event.preventDefault();
-    const normalizedVehicle = {
-      ...vehicle,
-      id: vehicle.id || createId("vehicle"),
-      plate: vehicle.plate.trim().toUpperCase(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    localMutationVersionRef.current += 1;
-    const savedVehicle = setVehicle(normalizedVehicle, user);
-    saveVehicleToSheet(omitLocalOnlyFields(savedVehicle), user).catch((error) => console.warn("No se pudo guardar vehículo en Google Sheets", error));
-    setVehicleForm(savedVehicle);
-    setSaved(true);
-    setSyncMessage("Vehículo guardado y asociado a tu usuario.");
+    void saveVehicle();
   }
 
   function handlePhotoUpload(event) {
@@ -268,7 +291,7 @@ export default function Vehicle({ user, onLogout }) {
         <p className="mb-4 rounded-2xl bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-700 ring-1 ring-blue-100">{syncMessage}</p>
       ) : null}
 
-      <form className="space-y-4" onSubmit={submitVehicle}>
+      <form className="space-y-4 pb-20" onSubmit={submitVehicle}>
         {showVehicleSyncing ? <VehicleLoadingNotice /> : null}
 
         <fieldset className="m-0 space-y-4 border-0 p-0">
@@ -420,11 +443,16 @@ export default function Vehicle({ user, onLogout }) {
           </Accordion>
           </div>
 
-          <button type="submit" className="primary-button w-full">
-          <Save size={18} />
-          Guardar vehículo
-          </button>
         </fieldset>
+
+        <div className="fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+5.25rem)] z-30 px-4 sm:px-6">
+          <div className="mx-auto max-w-3xl">
+            <button type="submit" className="primary-button w-full shadow-[0_18px_35px_rgba(37,99,235,0.28)]">
+              <Save size={18} />
+              Guardar vehículo
+            </button>
+          </div>
+        </div>
       </form>
     </main>
   );
@@ -439,7 +467,7 @@ function VehicleLoadingNotice() {
         </div>
         <div className="min-w-0">
           <h2 className="font-black text-slate-950">Sincronizando vehículo</h2>
-          <p className="mt-1 text-sm leading-6 text-slate-500">Puedes avanzar mientras actualizamos los datos desde Google Sheets.</p>
+          <p className="mt-1 text-sm leading-6 text-slate-500">Puedes avanzar mientras actualizamos los datos.</p>
         </div>
       </div>
     </div>

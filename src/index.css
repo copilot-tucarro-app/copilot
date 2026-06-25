@@ -43,7 +43,7 @@ button {
 
 @layer components {
   .input {
-    @apply w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-4 focus:ring-blue-100;
+    @apply w-full rounded-2xl border border-slate-200 bg-slate-100 px-4 py-3 text-sm text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-black focus:bg-slate-50 focus:ring-4 focus:ring-black/10 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500;
   }
 
   .label {
@@ -51,16 +51,25 @@ button {
   }
 
   .primary-button {
-    @apply inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-blue-600 px-5 py-3 text-sm font-bold text-white shadow-lift transition hover:-translate-y-0.5 hover:bg-blue-700 active:translate-y-0 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none;
+    @apply inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-black bg-black px-5 py-3 text-sm font-black text-white shadow-[0_16px_36px_rgba(0,0,0,0.26)] transition hover:-translate-y-0.5 hover:bg-neutral-900 active:translate-y-0 disabled:cursor-not-allowed disabled:border-slate-300 disabled:bg-slate-300 disabled:text-slate-500 disabled:shadow-none;
   }
 
   .secondary-button {
-    @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:border-blue-200 hover:text-blue-700 active:translate-y-0;
+    @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-black shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:bg-slate-50 active:translate-y-0 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 disabled:shadow-none;
+  }
+
+  select.input option {
+    @apply bg-white text-slate-950;
   }
 
   .screen-shell {
     @apply mx-auto flex min-h-screen w-full max-w-3xl flex-col px-4 pb-28 pt-5 sm:px-6;
   }
+}
+
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: #000000;
 }
 
 .app-modal-overlay {
@@ -283,5 +292,61 @@ button {
   100% {
     opacity: 0;
     transform: translateY(2.5rem) rotate(170deg);
+  }
+}
+
+.login-transition-logo {
+  animation: login-logo-enter 680ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.login-transition-copy {
+  animation: login-copy-enter 780ms cubic-bezier(0.22, 1, 0.36, 1) 90ms both;
+}
+
+.login-transition-actions {
+  animation: login-actions-enter 820ms cubic-bezier(0.22, 1, 0.36, 1) 150ms both;
+}
+
+@keyframes login-logo-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-1.15rem) scale(0.96);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes login-copy-enter {
+  from {
+    opacity: 0;
+    transform: translateY(0.65rem);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes login-actions-enter {
+  from {
+    opacity: 0;
+    transform: translateY(1.4rem);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-transition-logo,
+  .login-transition-copy,
+  .login-transition-actions {
+    animation: none;
   }
 }

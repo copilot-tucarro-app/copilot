@@ -1,2 +1,2 @@
-createdAt	userId	nombre	correo	telefono	ciudad	password	role	source	canUseSalesAgent
-2026-05-20T00:00:00.000Z	owner-jrudas	Jrudas	jrudas		Medellin	Rudas2025*	owner	owner-login	TRUE
+createdAt	userId	nombre	correo	telefono	ciudad	password	role	source	canUseSalesAgent	subscriptionStatus	subscriptionEndsAt	trialStartedAt	trialEndsAt	dataTreatmentAcceptedAt	dataTreatmentVersion	passwordResetCode	passwordResetExpiresAt	passwordResetUsedAt	mustChangePassword	passwordUpdatedAt	idCDA	codigoAliado	nombreCDA	logoCdaUrl	plantillaBienvenida	plantillaVencimiento	plantillaPicoPlaca	plantillaAlerta
+2026-05-20T00:00:00.000Z	owner-jrudas	Jrudas	jrudas		Medellin	Rudas2025*	owner	owner-login	TRUE	active					CO-LEY-1581-2012-v1				FALSE									

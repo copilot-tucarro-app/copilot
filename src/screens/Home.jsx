@@ -1,17 +1,19 @@
 ﻿import { BriefcaseBusiness, CalendarClock, Fuel, Info, Mail, Maximize2, PlayCircle, ShieldAlert, Sparkles, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { CreditCard } from "lucide-react";
 import { AlertTriangle, ArrowRight, FileWarning, Wrench } from "lucide-react";
 import Card from "../components/Card";
 import Header from "../components/Header";
 import PicoPlacaWidget from "../components/PicoPlacaWidget";
 import StatusBadge from "../components/StatusBadge";
 import UpToDateMedal from "../components/UpToDateMedal";
-import { APP_ICON_URL, APP_NAME } from "../config/appConfig";
+import { APP_ICON_INVERSE_URL, APP_NAME } from "../config/appConfig";
 import { homeSections, weeklyNews } from "../data/mockData";
 import { getCachedHomeNewsFromSheet, getCachedVehicleByUser, refreshHomeNewsFromSheet, refreshVehicleByUser } from "../services/api";
 import { buildHomePriorityAlerts, isVehicleUpToDate } from "../utils/alertUtils";
 import { formatShortDate } from "../utils/dateUtils";
 import { getDirectImageUrl } from "../utils/mediaUtils";
+import { notifyNewHomeNews } from "../utils/notificationUtils";
 import { getVehicle, setVehicle } from "../utils/storage";
 import { polishSpanishText } from "../utils/textUtils";
 
@@ -116,7 +118,7 @@ export default function Home({ user, onLogout, onNavigate, onOpenAgent, canUseSa
       })
       .catch((error) => {
         if (!isActive) return;
-        console.warn("No se pudo cargar vehículo desde Sheets", error);
+        console.warn("No se pudo cargar vehículo remoto", error);
         setVehicleSyncStatus(immediateVehicle ? "local" : "error");
       });
 
@@ -136,10 +138,12 @@ export default function Home({ user, onLogout, onNavigate, onOpenAgent, canUseSa
       refreshHomeNewsFromSheet()
         .then((result) => {
           if (result?.ok && result.items?.length) {
-            setNewsItems(getNewsItemsFromResult(result));
+            const freshNewsItems = getNewsItemsFromResult(result);
+            setNewsItems(freshNewsItems);
+            notifyNewHomeNews({ user, items: freshNewsItems }).catch((error) => console.warn("No se pudo notificar novedades", error));
           }
         })
-        .catch((error) => console.warn("No se pudieron cargar novedades desde Sheets", error));
+        .catch((error) => console.warn("No se pudieron cargar novedades remotas", error));
     }, 0);
 
     return () => window.clearTimeout(newsTimer);
@@ -157,7 +161,7 @@ export default function Home({ user, onLogout, onNavigate, onOpenAgent, canUseSa
           <button
             type="button"
             onClick={onOpenAgent}
-            className="grid size-11 place-items-center rounded-2xl bg-white text-blue-600 shadow-sm ring-1 ring-blue-100 transition hover:-translate-y-0.5"
+            className="grid size-11 place-items-center rounded-2xl bg-white text-slate-950 shadow-sm ring-1 ring-slate-200 transition hover:-translate-y-0.5"
             aria-label="Agente de ventas"
             title="Agente de ventas"
           >
@@ -168,7 +172,7 @@ export default function Home({ user, onLogout, onNavigate, onOpenAgent, canUseSa
             <button
               type="button"
               onClick={() => setShowInfo((current) => !current)}
-              className="grid size-11 place-items-center rounded-2xl bg-white text-slate-600 shadow-sm ring-1 ring-slate-200 transition hover:-translate-y-0.5 hover:text-blue-600"
+              className="grid size-11 place-items-center rounded-2xl bg-white text-slate-600 shadow-sm ring-1 ring-slate-200 transition hover:-translate-y-0.5 hover:text-black"
               aria-label="Información"
               title="Información"
             >
@@ -180,6 +184,8 @@ export default function Home({ user, onLogout, onNavigate, onOpenAgent, canUseSa
 
       {showInfo ? <ContactInfoCard onClose={() => setShowInfo(false)} /> : null}
 
+      <TrialSubscriptionBanner user={user} />
+
       <HomePriorityAlerts alerts={priorityAlerts} onOpenVehicle={() => onNavigate?.("vehicle")} />
 
       <PicoPlacaWidget vehicle={activeVehicle} syncStatus={vehicleSyncStatus} />
@@ -189,7 +195,7 @@ export default function Home({ user, onLogout, onNavigate, onOpenAgent, canUseSa
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_78%_20%,rgba(37,99,235,0.6),transparent_20rem)]" />
           <div className="relative flex items-center gap-4">
             <div className="grid size-14 shrink-0 place-items-center overflow-hidden rounded-3xl bg-slate-950 ring-1 ring-white/15">
-              <img src={APP_ICON_URL} alt="" className="h-full w-full object-cover" />
+              <img src={APP_ICON_INVERSE_URL} alt="" className="h-full w-full object-cover" />
             </div>
             <div className="min-w-0">
               <p className="text-xs font-bold uppercase tracking-[0.22em] text-blue-200">Resumen inteligente</p>
@@ -266,6 +272,74 @@ function formatHomeSectionTitle(section) {
   };
 
   return polishSpanishText(titles[section] || section);
+}
+
+function TrialSubscriptionBanner({ user }) {
+  const trial = getTrialState(user);
+  if (!trial) return null;
+
+  const mailSubject = encodeURIComponent(`Quiero activar mi suscripción a ${APP_NAME}`);
+  const mailBody = encodeURIComponent(
+    [
+      `Hola, quiero activar mi suscripción a ${APP_NAME}.`,
+      "",
+      `Nombre: ${user?.name || ""}`,
+      `Correo: ${user?.email || ""}`,
+      `Prueba gratis: ${trial.message}`,
+    ].join("\n"),
+  );
+
+  return (
+    <section className="mb-5 rounded-3xl border border-blue-100 bg-blue-50 p-4 text-blue-950 shadow-sm">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 items-start gap-3">
+          <div className="grid size-11 shrink-0 place-items-center rounded-2xl bg-white text-blue-700 shadow-sm ring-1 ring-blue-100">
+            <CreditCard size={20} />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs font-black uppercase tracking-wide text-blue-700">Prueba gratis activa</p>
+            <h2 className="mt-1 text-base font-black leading-tight">{trial.message}</h2>
+            <p className="mt-1 text-sm leading-6 text-blue-800/80">Suscríbete para mantener tus alertas y datos activos sin interrupciones.</p>
+          </div>
+        </div>
+
+        <a href={`mailto:${contactInfo.email}?subject=${mailSubject}&body=${mailBody}`} className="primary-button min-h-11 shrink-0 px-4 py-2">
+          Suscribirme
+        </a>
+      </div>
+    </section>
+  );
+}
+
+function getTrialState(user) {
+  const accessType = String(user?.accessType || user?.subscriptionStatus || "").trim().toLowerCase();
+  const isTrial = accessType === "trial" || Boolean(user?.trialEndsAt);
+  if (!isTrial) return null;
+
+  const endsAt = parseTrialDate(user?.trialEndsAt);
+  if (!endsAt) return null;
+
+  const daysRemaining = Math.ceil((endsAt.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+  if (daysRemaining < 0) return null;
+
+  const dateText = new Intl.DateTimeFormat("es-CO", {
+    day: "2-digit",
+    month: "short",
+  }).format(endsAt);
+
+  return {
+    daysRemaining,
+    message:
+      daysRemaining === 0
+        ? `Tu prueba gratis vence hoy, ${dateText}.`
+        : `Te ${daysRemaining === 1 ? "queda" : "quedan"} ${daysRemaining} ${daysRemaining === 1 ? "día" : "días"} de prueba gratis. Vence el ${dateText}.`,
+  };
+}
+
+function parseTrialDate(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
 }
 
 function PriorityAlertButton({ alert, onOpenVehicle }) {

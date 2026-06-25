@@ -184,6 +184,10 @@ export function setVehicle(vehicle, userOrEmail) {
     localStorage.setItem(`${KEYS.activeVehicleId}:${email}`, normalizedVehicle.id);
   }
 
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("copilot:vehicle-updated", { detail: { email, vehicle: normalizedVehicle } }));
+  }
+
   return normalizedVehicle;
 }
 

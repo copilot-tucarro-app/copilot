@@ -185,10 +185,10 @@ async function loadRulesWithSource() {
 
     if (result?.ok && rules.length) {
       writeCachedRules(rules);
-      return { rules, source: "sheets" };
+      return { rules, source: "remote" };
     }
   } catch (error) {
-    console.warn("No se pudieron cargar reglas de Pico y Placa desde Sheets", error);
+    console.warn("No se pudieron cargar reglas remotas de Pico y Placa", error);
   }
 
   const cached = readCachedRules();

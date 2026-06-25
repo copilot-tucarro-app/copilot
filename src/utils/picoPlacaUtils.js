@@ -63,7 +63,7 @@ export function checkPicoPlaca({ city, plate, vehicleType = "Carro", rules, date
       status: "neutral",
       restricted: false,
       title: "Ciudad sin regla simulada",
-      message: "No hay regla local configurada todavía. Se podrá conectar con Google Sheets después.",
+      message: "No hay regla local configurada todavía.",
       lastDigit: selectedDigit,
       selectedDigit,
       digitPosition: restrictionDigit.position,

@@ -1,33 +1,33 @@
-ciudad	label	tipoVehiculo	diaSemana	tipoRegla	digitosRestriccion	criterioPlaca	horarioInicio	horarioFin	activo	fechaInicio	fechaFin	nota	fuenteOficial	urlFuente
-Medellin	Medellin y Area Metropolitana	particular	1	lista	6,9	ultimo	05:00	20:00	true			Regla editable desde Google Sheets	Fallback local	
-Medellin	Medellin y Area Metropolitana	particular	2	lista	5,7	ultimo	05:00	20:00	true			Regla editable desde Google Sheets	Fallback local	
-Medellin	Medellin y Area Metropolitana	particular	3	lista	1,4	ultimo	05:00	20:00	true			Regla editable desde Google Sheets	Fallback local	
-Medellin	Medellin y Area Metropolitana	particular	4	lista	8,0	ultimo	05:00	20:00	true			Regla editable desde Google Sheets	Fallback local	
-Medellin	Medellin y Area Metropolitana	particular	5	lista	2,3	ultimo	05:00	20:00	true			Regla editable desde Google Sheets	Fallback local	
-Medellin	Motos Medellin y Area Metropolitana	moto	1	lista	6,9	primero	05:00	20:00	true			Regla editable desde Google Sheets	Fallback local	
-Medellin	Motos Medellin y Area Metropolitana	moto	2	lista	5,7	primero	05:00	20:00	true			Regla editable desde Google Sheets	Fallback local	
-Medellin	Motos Medellin y Area Metropolitana	moto	3	lista	1,4	primero	05:00	20:00	true			Regla editable desde Google Sheets	Fallback local	
-Medellin	Motos Medellin y Area Metropolitana	moto	4	lista	8,0	primero	05:00	20:00	true			Regla editable desde Google Sheets	Fallback local	
-Medellin	Motos Medellin y Area Metropolitana	moto	5	lista	2,3	primero	05:00	20:00	true			Regla editable desde Google Sheets	Fallback local	
-Bogota	Bogota	particular	1	pares_impares	IMPAR	ultimo	06:00	21:00	true			Regla editable desde Google Sheets	Fallback local	
-Bogota	Bogota	particular	2	pares_impares	PAR	ultimo	06:00	21:00	true			Regla editable desde Google Sheets	Fallback local	
-Bogota	Bogota	particular	3	pares_impares	IMPAR	ultimo	06:00	21:00	true			Regla editable desde Google Sheets	Fallback local	
-Bogota	Bogota	particular	4	pares_impares	PAR	ultimo	06:00	21:00	true			Regla editable desde Google Sheets	Fallback local	
-Bogota	Bogota	particular	5	pares_impares	IMPAR	ultimo	06:00	21:00	true			Regla editable desde Google Sheets	Fallback local	
-Cali	Cali	particular	1	lista	3,4	ultimo	06:00	20:00	true			Regla editable desde Google Sheets	Fallback local	
-Cali	Cali	particular	2	lista	5,6	ultimo	06:00	20:00	true			Regla editable desde Google Sheets	Fallback local	
-Cali	Cali	particular	3	lista	7,8	ultimo	06:00	20:00	true			Regla editable desde Google Sheets	Fallback local	
-Cali	Cali	particular	4	lista	9,0	ultimo	06:00	20:00	true			Regla editable desde Google Sheets	Fallback local	
-Cali	Cali	particular	5	lista	1,2	ultimo	06:00	20:00	true			Regla editable desde Google Sheets	Fallback local	
-Bucaramanga	Bucaramanga	particular	1	lista	1,2	ultimo	06:00	20:00	true			Regla editable desde Google Sheets	Fallback local	
-Bucaramanga	Bucaramanga	particular	2	lista	3,4	ultimo	06:00	20:00	true			Regla editable desde Google Sheets	Fallback local	
-Bucaramanga	Bucaramanga	particular	3	lista	5,6	ultimo	06:00	20:00	true			Regla editable desde Google Sheets	Fallback local	
-Bucaramanga	Bucaramanga	particular	4	lista	7,8	ultimo	06:00	20:00	true			Regla editable desde Google Sheets	Fallback local	
-Bucaramanga	Bucaramanga	particular	5	lista	9,0	ultimo	06:00	20:00	true			Regla editable desde Google Sheets	Fallback local	
-Armenia	Armenia	particular	1	lista	1,2	ultimo	06:00	20:00	true			Regla editable desde Google Sheets	Fallback local	
-Pasto	Pasto	particular	1	lista	0,1	ultimo	06:00	20:00	true			Regla editable desde Google Sheets	Fallback local	
-Barranquilla	Barranquilla	particular	todos	ninguno		ultimo			true			Ciudad sin restriccion configurada para particulares	Fallback local	
-Cartagena	Cartagena	particular	todos	ninguno		ultimo			true			Ciudad sin restriccion configurada para particulares	Fallback local	
-Manizales	Manizales	particular	1	lista	1,2	ultimo	06:00	20:00	true			Regla editable desde Google Sheets	Fallback local	
-Pereira	Pereira	particular	1	lista	0,1	ultimo	06:00	20:00	true			Regla editable desde Google Sheets	Fallback local	
-Cucuta	Cucuta	particular	1	lista	1,2	ultimo	06:00	20:00	true			Regla editable desde Google Sheets	Fallback local	
+﻿ciudad	label	tipoVehiculo	diaSemana	tipoRegla	digitosRestriccion	criterioPlaca	horarioInicio	horarioFin	activo	fechaInicio	fechaFin	nota	fuenteOficial	urlFuente
+Medellin	Medellin y Area Metropolitana	particular	1	lista	6,9	ultimo	05:00	20:00	true			Regla vigente	Base local	
+Medellin	Medellin y Area Metropolitana	particular	2	lista	5,7	ultimo	05:00	20:00	true			Regla vigente	Base local	
+Medellin	Medellin y Area Metropolitana	particular	3	lista	1,4	ultimo	05:00	20:00	true			Regla vigente	Base local	
+Medellin	Medellin y Area Metropolitana	particular	4	lista	8,0	ultimo	05:00	20:00	true			Regla vigente	Base local	
+Medellin	Medellin y Area Metropolitana	particular	5	lista	2,3	ultimo	05:00	20:00	true			Regla vigente	Base local	
+Medellin	Motos Medellin y Area Metropolitana	moto	1	lista	6,9	primero	05:00	20:00	true			Regla vigente	Base local	
+Medellin	Motos Medellin y Area Metropolitana	moto	2	lista	5,7	primero	05:00	20:00	true			Regla vigente	Base local	
+Medellin	Motos Medellin y Area Metropolitana	moto	3	lista	1,4	primero	05:00	20:00	true			Regla vigente	Base local	
+Medellin	Motos Medellin y Area Metropolitana	moto	4	lista	8,0	primero	05:00	20:00	true			Regla vigente	Base local	
+Medellin	Motos Medellin y Area Metropolitana	moto	5	lista	2,3	primero	05:00	20:00	true			Regla vigente	Base local	
+Bogota	Bogota	particular	1	pares_impares	IMPAR	ultimo	06:00	21:00	true			Regla vigente	Base local	
+Bogota	Bogota	particular	2	pares_impares	PAR	ultimo	06:00	21:00	true			Regla vigente	Base local	
+Bogota	Bogota	particular	3	pares_impares	IMPAR	ultimo	06:00	21:00	true			Regla vigente	Base local	
+Bogota	Bogota	particular	4	pares_impares	PAR	ultimo	06:00	21:00	true			Regla vigente	Base local	
+Bogota	Bogota	particular	5	pares_impares	IMPAR	ultimo	06:00	21:00	true			Regla vigente	Base local	
+Cali	Cali	particular	1	lista	3,4	ultimo	06:00	20:00	true			Regla vigente	Base local	
+Cali	Cali	particular	2	lista	5,6	ultimo	06:00	20:00	true			Regla vigente	Base local	
+Cali	Cali	particular	3	lista	7,8	ultimo	06:00	20:00	true			Regla vigente	Base local	
+Cali	Cali	particular	4	lista	9,0	ultimo	06:00	20:00	true			Regla vigente	Base local	
+Cali	Cali	particular	5	lista	1,2	ultimo	06:00	20:00	true			Regla vigente	Base local	
+Bucaramanga	Bucaramanga	particular	1	lista	1,2	ultimo	06:00	20:00	true			Regla vigente	Base local	
+Bucaramanga	Bucaramanga	particular	2	lista	3,4	ultimo	06:00	20:00	true			Regla vigente	Base local	
+Bucaramanga	Bucaramanga	particular	3	lista	5,6	ultimo	06:00	20:00	true			Regla vigente	Base local	
+Bucaramanga	Bucaramanga	particular	4	lista	7,8	ultimo	06:00	20:00	true			Regla vigente	Base local	
+Bucaramanga	Bucaramanga	particular	5	lista	9,0	ultimo	06:00	20:00	true			Regla vigente	Base local	
+Armenia	Armenia	particular	1	lista	1,2	ultimo	06:00	20:00	true			Regla vigente	Base local	
+Pasto	Pasto	particular	1	lista	0,1	ultimo	06:00	20:00	true			Regla vigente	Base local	
+Barranquilla	Barranquilla	particular	todos	ninguno		ultimo			true			Ciudad sin restriccion configurada para particulares	Base local	
+Cartagena	Cartagena	particular	todos	ninguno		ultimo			true			Ciudad sin restriccion configurada para particulares	Base local	
+Manizales	Manizales	particular	1	lista	1,2	ultimo	06:00	20:00	true			Regla vigente	Base local	
+Pereira	Pereira	particular	1	lista	0,1	ultimo	06:00	20:00	true			Regla vigente	Base local	
+Cucuta	Cucuta	particular	1	lista	1,2	ultimo	06:00	20:00	true			Regla vigente	Base local	

@@ -3,21 +3,92 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#0f172a" />
+    <meta name="theme-color" content="#020617" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-title" content="COPILOT" />
+    <meta name="apple-mobile-web-app-title" content="copilot360" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta
       name="description"
-      content="COPILOT ayuda a conductores en Colombia a controlar vencimientos, mantenimientos, gasolina, fotomultas y pico y placa."
+      content="copilot360 ayuda a conductores en Colombia a controlar vencimientos, mantenimientos, gasolina, fotomultas y pico y placa."
     />
-    <link rel="icon" type="image/png" href="./favicon.png" />
-    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
-    <link rel="manifest" href="./manifest.webmanifest" />
-    <title>COPILOT</title>
+    <link rel="icon" type="image/png" href="./favicon.png?v=20260605-copilot360-iphoneinstructions" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png?v=20260605-copilot360-iphoneinstructions" />
+    <link rel="manifest" href="./manifest.webmanifest?v=20260605-copilot360-iphoneinstructions" />
+    <link rel="preconnect" href="https://api.mapbox.com" />
+    <link rel="preconnect" href="https://events.mapbox.com" />
+    <link rel="dns-prefetch" href="https://api.mapbox.com" />
+    <link rel="dns-prefetch" href="https://events.mapbox.com" />
+    <title>copilot360</title>
+    <script>
+      window.__COPILOT_BOOT_SPLASH_STARTED_AT = performance.now();
+    </script>
+    <style>
+      #boot-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: grid;
+        place-items: center;
+        min-width: 320px;
+        background: #020617;
+        opacity: 1;
+        visibility: visible;
+        transition:
+          opacity 180ms ease,
+          visibility 180ms ease;
+      }
+
+      #boot-splash.boot-splash-hide {
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+      }
+
+      #boot-splash .boot-splash-content {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 1.35rem;
+      }
+
+      #boot-splash img {
+        width: min(66vw, 15rem);
+        height: auto;
+        display: block;
+      }
+
+      #boot-splash .boot-splash-spinner {
+        width: 2rem;
+        height: 2rem;
+        border: 0.2rem solid rgba(255, 255, 255, 0.28);
+        border-top-color: #ffffff;
+        border-radius: 9999px;
+        animation: boot-splash-spin 760ms linear infinite;
+      }
+
+      @keyframes boot-splash-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        #boot-splash,
+        #boot-splash .boot-splash-spinner {
+          transition: none;
+          animation: none;
+        }
+      }
+    </style>
   </head>
   <body>
+    <div id="boot-splash" aria-label="Cargando copilot360" role="status">
+      <div class="boot-splash-content">
+        <img src="./copilot360-logo.png?v=20260605-copilot360-iphoneinstructions" alt="copilot360" />
+        <div class="boot-splash-spinner" aria-hidden="true"></div>
+      </div>
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
