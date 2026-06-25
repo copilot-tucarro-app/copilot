@@ -2,7 +2,7 @@
   "name": "copilot360",
   "private": true,
   "version": "0.1.0",
-  "homepage": "https://copilot-tucarro-app.github.io/copilot/",
+  "homepage": "https://copilot360.co/",
   "type": "module",
   "scripts": {
     "dev": "vite",
