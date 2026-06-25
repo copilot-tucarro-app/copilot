@@ -2,13 +2,14 @@ import { getDateStatus } from "./dateUtils";
 
 const DOCUMENT_FIELDS = [
   { key: "soatExpiry", noticeKey: "soatNoticeDays", label: "SOAT" },
-  { key: "techReviewExpiry", noticeKey: "techReviewNoticeDays", label: "Tecnomecánica" },
+  { key: "techReviewExpiry", noticeKey: "techReviewNoticeDays", label: "Tecnomecanica" },
   { key: "licenseExpiry", noticeKey: "licenseNoticeDays", label: "Licencia" },
   { key: "taxExpiry", noticeKey: "taxNoticeDays", label: "Impuesto vehicular" },
 ];
 
 export function buildDocumentAlerts(vehicle) {
   if (!vehicle) return [];
+
   return DOCUMENT_FIELDS.map((item) => {
     const noticeDays = Number(vehicle[item.noticeKey] || 30);
     return {
@@ -35,7 +36,7 @@ export function buildMaintenanceAlerts(vehicle) {
     const targetKm = Number(vehicle[item.key] || 0);
     const remainingKm = targetKm - currentKm;
     let tone = "success";
-    let label = "Al día";
+    let label = "Al dia";
 
     if (!targetKm) {
       tone = "neutral";
@@ -45,7 +46,7 @@ export function buildMaintenanceAlerts(vehicle) {
       label = "Urgente";
     } else if (remainingKm <= 500) {
       tone = "warning";
-      label = "Próximo";
+      label = "Proximo";
     }
 
     return {
@@ -74,8 +75,20 @@ export function isVehicleUpToDate(vehicle) {
   return alerts.length > 0 && alerts.every((alert) => alert.tone === "success");
 }
 
-export function buildHomePriorityAlerts(vehicle) {
-  if (!vehicle) return [];
+export function isFleetUpToDate(vehicles) {
+  const vehicleList = normalizeVehiclesInput(vehicles);
+  return vehicleList.length > 0 && vehicleList.every(isVehicleUpToDate);
+}
+
+export function buildHomePriorityAlerts(vehicleOrVehicles) {
+  const vehicleList = normalizeVehiclesInput(vehicleOrVehicles);
+  if (!vehicleList.length) return [];
+
+  return vehicleList.flatMap(buildVehicleHomePriorityAlerts).sort(sortPriorityAlerts);
+}
+
+function buildVehicleHomePriorityAlerts(vehicle) {
+  const vehicleLabel = getVehicleLabel(vehicle);
 
   const documentAlerts = buildDocumentAlerts(vehicle)
     .filter((alert) => alert.tone === "danger" || alert.tone === "warning")
@@ -88,7 +101,7 @@ export function buildHomePriorityAlerts(vehicle) {
         tone: isExpired && !isTax ? "danger" : "warning",
         eyebrow: getDocumentEyebrow(isExpired, isTax),
         title: isExpired ? `${alert.title} vencido` : `${alert.title} vence ${formatDaysUntil(alert.days)}`,
-        message: getDocumentMessage(alert, isExpired, isTax),
+        message: `${vehicleLabel}: ${getDocumentMessage(alert, isExpired, isTax)}`,
       };
     });
 
@@ -97,34 +110,51 @@ export function buildHomePriorityAlerts(vehicle) {
     .map((alert) => ({
       id: `home-${alert.id}`,
       tone: "warning",
-      eyebrow: alert.tone === "danger" ? "Mantenimiento vencido" : "Mantenimiento próximo",
+      eyebrow: alert.tone === "danger" ? "Mantenimiento vencido" : "Mantenimiento proximo",
       title: alert.title,
       message:
         alert.tone === "danger"
-          ? `El kilometraje objetivo ya se pasó por ${Math.abs(alert.remainingKm).toLocaleString("es-CO")} km. Programa este servicio para evitar daños mayores.`
-          : `Faltan ${Math.max(alert.remainingKm, 0).toLocaleString("es-CO")} km para este servicio. Puedes programarlo con tiempo.`,
+          ? `${vehicleLabel}: el kilometraje objetivo ya se paso por ${Math.abs(alert.remainingKm).toLocaleString("es-CO")} km. Programa este servicio para evitar danos mayores.`
+          : `${vehicleLabel}: faltan ${Math.max(alert.remainingKm, 0).toLocaleString("es-CO")} km para este servicio. Puedes programarlo con tiempo.`,
     }));
 
   return [...documentAlerts, ...maintenanceAlerts];
 }
 
+function normalizeVehiclesInput(vehicleOrVehicles) {
+  if (Array.isArray(vehicleOrVehicles)) return vehicleOrVehicles.filter(Boolean);
+  return vehicleOrVehicles ? [vehicleOrVehicles] : [];
+}
+
+function sortPriorityAlerts(left, right) {
+  const toneScore = { danger: 0, warning: 1, neutral: 2, success: 3 };
+  return (toneScore[left.tone] ?? 9) - (toneScore[right.tone] ?? 9);
+}
+
+function getVehicleLabel(vehicle) {
+  const name = [vehicle.brand, vehicle.model].filter(Boolean).join(" ").trim();
+  const plate = vehicle.plate || vehicle.placa || "";
+  if (name && plate) return `${name} (${plate})`;
+  return plate || name || "Vehiculo";
+}
+
 function getDocumentEyebrow(isExpired, isTax) {
-  if (isExpired && isTax) return "Obligación vencida";
+  if (isExpired && isTax) return "Obligacion vencida";
   if (isExpired) return "No puedes circular";
   return "Documento por vencer";
 }
 
 function getDocumentMessage(alert, isExpired, isTax) {
   if (isExpired && isTax) {
-    return "El impuesto vehicular está vencido. Aunque no es Pico y Placa, conviene resolverlo cuanto antes para mantener tu vehículo al día.";
+    return "El impuesto vehicular esta vencido. Aunque no es Pico y Placa, conviene resolverlo cuanto antes para mantener tu vehiculo al dia.";
   }
 
   if (isExpired) {
-    return `${alert.title} está vencido. Aunque no tengas Pico y Placa, no puedes circular hasta actualizar este documento.`;
+    return `${alert.title} esta vencido. Aunque no tengas Pico y Placa, no puedes circular hasta actualizar este documento.`;
   }
 
   if (isTax) {
-    return `El impuesto vehicular vence ${formatDaysUntil(alert.days)}. Déjalo listo para mantener el vehículo al día.`;
+    return `El impuesto vehicular vence ${formatDaysUntil(alert.days)}. Dejalo listo para mantener el vehiculo al dia.`;
   }
 
   return `${alert.title} vence ${formatDaysUntil(alert.days)}. Renueva antes de la fecha para evitar bloqueos al salir.`;
@@ -132,8 +162,8 @@ function getDocumentMessage(alert, isExpired, isTax) {
 
 function formatDaysUntil(days) {
   if (days === 0) return "hoy";
-  if (days === 1) return "mañana";
-  if (days > 1) return `en ${days.toLocaleString("es-CO")} días`;
+  if (days === 1) return "manana";
+  if (days > 1) return `en ${days.toLocaleString("es-CO")} dias`;
   if (days === -1) return "desde ayer";
-  return `hace ${Math.abs(days).toLocaleString("es-CO")} días`;
+  return `hace ${Math.abs(days).toLocaleString("es-CO")} dias`;
 }

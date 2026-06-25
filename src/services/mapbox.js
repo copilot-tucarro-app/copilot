@@ -5,6 +5,8 @@ const MAPBOX_SEARCHBOX_URL = "https://api.mapbox.com/search/searchbox/v1";
 const MAPBOX_DIRECTIONS_URL = "https://api.mapbox.com/directions/v5/mapbox/driving-traffic";
 const MAPBOX_TOKEN_CACHE_KEY = "copiloto:mapboxAccessToken";
 const MAPBOX_TOKEN_CACHE_TTL_MS = 1000 * 60 * 60 * 12;
+const SEARCHBOX_TYPES = "address,street,poi,place,neighborhood,locality";
+const GEOCODE_TYPES = "address,street,place,locality,neighborhood";
 let cachedMapboxAccessToken = MAPBOX_ACCESS_TOKEN || readStoredMapboxToken();
 let mapboxTokenRequest = null;
 
@@ -82,21 +84,26 @@ export async function searchMapboxPlaces(query, options = {}) {
     country: "CO",
     language: "es",
     limit: "10",
+    types: SEARCHBOX_TYPES,
   });
 
-  if (options.proximity?.lng && options.proximity?.lat) {
+  if (hasCoordinates(options.proximity)) {
     params.set("proximity", `${options.proximity.lng},${options.proximity.lat}`);
   }
 
-  const response = await fetch(`${MAPBOX_SEARCHBOX_URL}/suggest?${params.toString()}`);
-  if (!response.ok) throw new Error("No se pudo buscar el lugar en Mapbox.");
+  const suggestionsRequest = fetch(`${MAPBOX_SEARCHBOX_URL}/suggest?${params.toString()}`)
+    .then((response) => {
+      if (!response.ok) throw new Error("No se pudo buscar el lugar en Mapbox.");
+      return response.json();
+    })
+    .then((data) => (data.suggestions || []).map((suggestion) => formatSearchBoxSuggestion(suggestion, sessionToken, options.proximity)))
+    .catch(() => []);
+  const geocodeRequest = searchMapboxPlacesByText(cleanQuery, { ...options, accessToken }).catch(() => []);
 
-  const data = await response.json();
-  const suggestions = (data.suggestions || []).map((suggestion) => formatSearchBoxSuggestion(suggestion, sessionToken, options.proximity));
+  const [suggestions, geocodeResults] = await Promise.all([suggestionsRequest, geocodeRequest]);
+  const orderedResults = looksLikeAddressQuery(cleanQuery) ? [...geocodeResults, ...suggestions] : [...suggestions, ...geocodeResults];
 
-  if (suggestions.length) return suggestions;
-
-  return searchMapboxPlacesByText(cleanQuery, { ...options, accessToken });
+  return dedupePlaces(orderedResults).slice(0, 10);
 }
 
 export async function resolveMapboxPlace(place) {
@@ -266,17 +273,34 @@ async function searchMapboxPlacesByText(query, options = {}) {
     country: "CO",
     language: "es",
     limit: "10",
+    autocomplete: "true",
+    types: GEOCODE_TYPES,
   });
 
-  if (options.proximity?.lng && options.proximity?.lat) {
+  if (hasCoordinates(options.proximity)) {
     params.set("proximity", `${options.proximity.lng},${options.proximity.lat}`);
   }
 
-  const response = await fetch(`${MAPBOX_SEARCHBOX_URL}/forward?${params.toString()}`);
+  const response = await fetch(`${MAPBOX_GEOCODE_URL}/forward?${params.toString()}`);
   if (!response.ok) return [];
 
   const data = await response.json();
   return (data.features || []).map((feature) => formatSearchBoxFeature(feature, {}, options.proximity));
+}
+
+function dedupePlaces(places) {
+  const seen = new Set();
+  return places.filter((place) => {
+    const key = normalizePlaceText(place.mapboxId || place.id || `${place.label}:${place.lng}:${place.lat}`);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function looksLikeAddressQuery(query) {
+  const normalizedQuery = normalizePlaceText(query);
+  return /\d/.test(normalizedQuery) || /\b(cl|calle|cra|carrera|av|avenida|diag|diagonal|transversal|tv|autopista|km)\b/.test(normalizedQuery);
 }
 
 function buildPlaceLabel(name, detail) {

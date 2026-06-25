@@ -10,11 +10,11 @@ import UpToDateMedal from "../components/UpToDateMedal";
 import { APP_ICON_INVERSE_URL, APP_NAME } from "../config/appConfig";
 import { homeSections, weeklyNews } from "../data/mockData";
 import { getCachedHomeNewsFromSheet, getCachedVehicleByUser, refreshHomeNewsFromSheet, refreshVehicleByUser } from "../services/api";
-import { buildHomePriorityAlerts, isVehicleUpToDate } from "../utils/alertUtils";
+import { buildHomePriorityAlerts, isFleetUpToDate } from "../utils/alertUtils";
 import { formatShortDate } from "../utils/dateUtils";
 import { getDirectImageUrl } from "../utils/mediaUtils";
 import { notifyNewHomeNews } from "../utils/notificationUtils";
-import { getVehicle, setVehicle } from "../utils/storage";
+import { getVehicle, getVehicles, setVehicles } from "../utils/storage";
 import { polishSpanishText } from "../utils/textUtils";
 
 const sectionIcons = {
@@ -76,30 +76,34 @@ export default function Home({ user, onLogout, onNavigate, onOpenAgent, canUseSa
   const [showInfo, setShowInfo] = useState(false);
   const [newsItems, setNewsItems] = useState(() => getInitialHomeNews());
   const [activeVehicle, setActiveVehicle] = useState(() => getVehicle(user));
+  const [vehicles, setHomeVehicles] = useState(() => getVehicles(user));
   const [vehicleSyncStatus, setVehicleSyncStatus] = useState(() => (getVehicle(user) ? "local" : "loading"));
   const [selectedNews, setSelectedNews] = useState(null);
   const sections = useMemo(() => {
     const sheetSections = newsItems.map((item) => item.section).filter(Boolean);
     return Array.from(new Set([...homeSections, ...sheetSections])).sort((left, right) => getLatestSectionDateTime(right, newsItems) - getLatestSectionDateTime(left, newsItems));
   }, [newsItems]);
-  const priorityAlerts = useMemo(() => buildHomePriorityAlerts(activeVehicle), [activeVehicle]);
-  const vehicleIsUpToDate = useMemo(() => isVehicleUpToDate(activeVehicle), [activeVehicle]);
+  const priorityAlerts = useMemo(() => buildHomePriorityAlerts(vehicles.length ? vehicles : activeVehicle), [activeVehicle, vehicles]);
+  const vehicleIsUpToDate = useMemo(() => isFleetUpToDate(vehicles.length ? vehicles : activeVehicle), [activeVehicle, vehicles]);
 
   useEffect(() => {
     if (!user?.email) return;
     let isActive = true;
+    const localVehicles = getVehicles(user);
     const localVehicle = getVehicle(user);
     const cachedVehicle = getCachedSheetVehicle(user, localVehicle);
     const immediateVehicle = pickNewestVehicle(localVehicle, cachedVehicle);
+    const immediateVehicles = immediateVehicle ? mergeHomeVehicleList(localVehicles, immediateVehicle) : localVehicles;
 
-    if (immediateVehicle) {
-      const savedImmediateVehicle = setVehicle(mergeVehicleLocalOnlyFields(immediateVehicle, localVehicle), user);
-      setActiveVehicle(savedImmediateVehicle);
+    if (immediateVehicles.length) {
+      setHomeVehicles(immediateVehicles);
+      setActiveVehicle(resolveHomeActiveVehicle(immediateVehicles, immediateVehicle));
     } else {
+      setHomeVehicles([]);
       setActiveVehicle(null);
     }
 
-    setVehicleSyncStatus(immediateVehicle ? "updating" : "loading");
+    setVehicleSyncStatus(immediateVehicles.length || immediateVehicle ? "updating" : "loading");
 
     refreshVehicleByUser(user.email)
       .then((result) => {
@@ -107,25 +111,49 @@ export default function Home({ user, onLogout, onNavigate, onOpenAgent, canUseSa
 
         if (result?.ok && result.vehicle) {
           const currentLocalVehicle = getVehicle(user) || localVehicle;
+          const currentLocalVehicles = getVehicles(user);
           const sheetVehicle = mergeVehicleLocalOnlyFields(result.vehicle, currentLocalVehicle);
-          const savedVehicle = setVehicle(pickNewestVehicle(currentLocalVehicle, sheetVehicle), user);
+          const newestVehicle = pickNewestVehicle(currentLocalVehicle, sheetVehicle);
+          const savedVehicles = setVehicles(mergeHomeVehicleList(currentLocalVehicles, newestVehicle), user, { activeVehicleId: newestVehicle.id });
+          const savedVehicle = resolveHomeActiveVehicle(savedVehicles, newestVehicle);
+          setHomeVehicles(savedVehicles);
           setActiveVehicle(savedVehicle);
           setVehicleSyncStatus("ready");
           return;
         }
 
-        setVehicleSyncStatus(immediateVehicle ? "local" : "noVehicle");
+        setVehicleSyncStatus(immediateVehicles.length || immediateVehicle ? "local" : "noVehicle");
       })
       .catch((error) => {
         if (!isActive) return;
         console.warn("No se pudo cargar vehículo remoto", error);
-        setVehicleSyncStatus(immediateVehicle ? "local" : "error");
+        setVehicleSyncStatus(immediateVehicles.length || immediateVehicle ? "local" : "error");
       });
 
     return () => {
       isActive = false;
     };
   }, [user?.email]);
+
+  useEffect(() => {
+    if (!user?.email || typeof window === "undefined") return undefined;
+
+    function refreshVehiclesFromStorage() {
+      const nextVehicles = getVehicles(user);
+      setHomeVehicles(nextVehicles);
+      setActiveVehicle(getVehicle(user));
+    }
+
+    window.addEventListener("copilot:vehicle-updated", refreshVehiclesFromStorage);
+    window.addEventListener("copilot:vehicles-updated", refreshVehiclesFromStorage);
+    window.addEventListener("copilot:active-vehicle-updated", refreshVehiclesFromStorage);
+
+    return () => {
+      window.removeEventListener("copilot:vehicle-updated", refreshVehiclesFromStorage);
+      window.removeEventListener("copilot:vehicles-updated", refreshVehiclesFromStorage);
+      window.removeEventListener("copilot:active-vehicle-updated", refreshVehiclesFromStorage);
+    };
+  }, [user]);
 
   useEffect(() => {
     const newsTimer = window.setTimeout(() => {
@@ -168,7 +196,7 @@ export default function Home({ user, onLogout, onNavigate, onOpenAgent, canUseSa
             <BriefcaseBusiness size={19} />
           </button>
             ) : null}
-            {vehicleIsUpToDate ? <UpToDateMedal vehicleLabel={activeVehicle?.plate || "Vehiculo principal"} /> : null}
+            {vehicleIsUpToDate ? <UpToDateMedal vehicleLabel={vehicles.length > 1 ? `${vehicles.length} vehiculos` : activeVehicle?.plate || "Vehiculo principal"} /> : null}
             <button
               type="button"
               onClick={() => setShowInfo((current) => !current)}
@@ -188,7 +216,7 @@ export default function Home({ user, onLogout, onNavigate, onOpenAgent, canUseSa
 
       <HomePriorityAlerts alerts={priorityAlerts} onOpenVehicle={() => onNavigate?.("vehicle")} />
 
-      <PicoPlacaWidget vehicle={activeVehicle} syncStatus={vehicleSyncStatus} />
+      <PicoPlacaWidget vehicle={activeVehicle} vehicles={vehicles} syncStatus={vehicleSyncStatus} />
 
       <section className="mb-5 overflow-hidden rounded-[2rem] bg-slate-950 text-white shadow-soft">
         <div className="relative p-5">
@@ -535,6 +563,34 @@ function ContactInfoCard({ onClose }) {
       </div>
     </Card>
   );
+}
+
+function mergeHomeVehicleList(vehicles, vehicle) {
+  const vehicleList = Array.isArray(vehicles) ? vehicles.filter(Boolean) : [];
+  if (!vehicle) return vehicleList;
+
+  const nextVehicle = {
+    ...vehicle,
+    principal: vehicle.principal ?? !vehicleList.some((item) => item.principal),
+  };
+  const vehicleKey = getHomeVehicleKey(nextVehicle);
+  const exists = vehicleList.some((item) => getHomeVehicleKey(item) === vehicleKey);
+
+  if (!exists) return [nextVehicle, ...vehicleList];
+
+  return vehicleList.map((item) => (getHomeVehicleKey(item) === vehicleKey ? { ...item, ...nextVehicle } : item));
+}
+
+function resolveHomeActiveVehicle(vehicles, fallbackVehicle) {
+  if (!Array.isArray(vehicles) || !vehicles.length) return fallbackVehicle || null;
+  if (fallbackVehicle?.id) {
+    return vehicles.find((vehicle) => vehicle.id === fallbackVehicle.id) || fallbackVehicle;
+  }
+  return vehicles.find((vehicle) => vehicle.principal) || vehicles[0];
+}
+
+function getHomeVehicleKey(vehicle) {
+  return String(vehicle?.id || vehicle?.plate || vehicle?.placa || "").trim().toLowerCase();
 }
 
 function mergeVehicleLocalOnlyFields(sheetVehicle, localVehicle) {

@@ -226,7 +226,7 @@ export const photoDetectionCameras = [
 
 export const picoPlacaRules = [
   {
-    city: "Medellin",
+    city: "Medellin y Area Metropolitana",
     label: "Medellin y Area Metropolitana",
     note: "Reglas simuladas para demostracion.",
     schedule: {
@@ -277,4 +277,4 @@ export const picoPlacaRules = [
 
 export const vehicleTypeOptions = ["Carro", "Particular", "Moto", "Camioneta", "Taxi"];
 export const fuelOptions = ["Gasolina corriente", "Gasolina extra", "Diésel", "Gas", "Eléctrico", "Híbrido"];
-export const cityOptions = ["Bogota", "Medellin", "Cali", "Bucaramanga", "Armenia", "Pasto", "Barranquilla", "Cartagena", "Manizales", "Pereira", "Cucuta"];
+export const cityOptions = ["Medellín y Área Metropolitana"];

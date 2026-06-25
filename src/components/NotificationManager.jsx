@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { getNotificationPreferences, getMsUntilNextReminderTime, runVehicleNotificationCheck } from "../utils/notificationUtils";
-import { getVehicle } from "../utils/storage";
+import { getVehicles } from "../utils/storage";
 
 export default function NotificationManager({ user }) {
   useEffect(() => {
@@ -14,7 +14,7 @@ export default function NotificationManager({ user }) {
 
       await runVehicleNotificationCheck({
         user,
-        vehicle: getVehicle(user),
+        vehicles: getVehicles(user),
         force,
       });
     }
@@ -53,6 +53,7 @@ export default function NotificationManager({ user }) {
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
     window.addEventListener("copilot:vehicle-updated", handleVehicleUpdated);
+    window.addEventListener("copilot:vehicles-updated", handleVehicleUpdated);
     window.addEventListener("copilot:notification-preferences-updated", handlePreferencesUpdated);
 
     return () => {
@@ -60,6 +61,7 @@ export default function NotificationManager({ user }) {
       window.clearTimeout(timeoutId);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.removeEventListener("copilot:vehicle-updated", handleVehicleUpdated);
+      window.removeEventListener("copilot:vehicles-updated", handleVehicleUpdated);
       window.removeEventListener("copilot:notification-preferences-updated", handlePreferencesUpdated);
     };
   }, [user]);

@@ -1,10 +1,10 @@
-import { Bell, Car, Grid3X3, Home, MapPinned } from "lucide-react";
+import { Bell, CarFrontIcon, CompassIcon, Grid3X3, Home } from "lucide-react";
 import { isCenterScreen } from "../config/centerTools";
 
 const navItems = [
   { id: "home", label: "Home", shortLabel: "Inicio", icon: Home },
-  { id: "vehicle", label: "Vehiculo", shortLabel: "Auto", icon: Car },
-  { id: "travel", label: "Viajes", shortLabel: "Ruta", icon: MapPinned },
+  { id: "vehicle", label: "Vehiculo", shortLabel: "Auto", icon: CarFrontIcon },
+  { id: "travel", label: "Viajes", shortLabel: "Ruta360", icon: CompassIcon },
   { id: "alerts", label: "Alertas", shortLabel: "Avisos", icon: Bell },
   { id: "center", label: "Centro", shortLabel: "Centro", icon: Grid3X3 },
 ];

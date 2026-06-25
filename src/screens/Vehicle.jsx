@@ -1,27 +1,36 @@
-import {
+﻿import {
   BadgeCheck,
-  CalendarClock,
+  Bell,
+  CalendarDays,
   Camera,
   CarFront,
-  ChevronDown,
-  Fuel,
+  CheckCircle2,
+  ChevronRight,
+  CirclePlus,
+  EllipsisVertical,
   Gauge,
+  IdCard,
   ImagePlus,
   Loader2,
   MapPin,
+  Pencil,
+  Plus,
   Save,
   ShieldCheck,
+  Star,
   Trash2,
   Wrench,
+  X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Header from "../components/Header";
-import StatusBadge from "../components/StatusBadge";
 import { cityOptions, fuelOptions, vehicleTypeOptions } from "../data/mockData";
 import { getCachedVehicleByUser, refreshVehicleByUser, saveVehicleToSheet } from "../services/api";
+import { checkPicoPlaca, getCachedPicoPlacaRulesPayload } from "../services/picoPlacaService";
+import { buildDocumentAlerts, buildMaintenanceAlerts } from "../utils/alertUtils";
 import { daysUntil, formatShortDate } from "../utils/dateUtils";
 import { createId } from "../utils/idUtils";
-import { getVehicle, setVehicle } from "../utils/storage";
+import { getActiveVehicleId, getVehicle, getVehicles, setActiveVehicleId, setVehicles } from "../utils/storage";
 import { polishSpanishText } from "../utils/textUtils";
 
 const defaultVehicle = {
@@ -35,23 +44,1152 @@ const defaultVehicle = {
   currentMileage: "",
   autonomyPerGallon: "",
   soatExpiry: "",
+  insuranceExpiry: "",
   techReviewExpiry: "",
   licenseExpiry: "",
   taxExpiry: "",
-  soatNoticeDays: "30",
-  techReviewNoticeDays: "30",
-  licenseNoticeDays: "30",
-  taxNoticeDays: "30",
+  soatNoticeDays: "15",
+  techReviewNoticeDays: "15",
+  licenseNoticeDays: "15",
+  taxNoticeDays: "15",
+  lastEngineOilKm: "",
   nextEngineOilKm: "",
+  lastGearboxOilKm: "",
   nextGearboxOilKm: "",
+  maintenanceNotes: "",
   vehiclePhotoDataUrl: "",
   vehiclePhotoUpdatedAt: "",
+  principal: false,
+  guardado: false,
 };
 
 const localOnlyVehicleFields = ["vehiclePhotoDataUrl", "vehiclePhotoUpdatedAt"];
 
-function getInitialStoredVehicle(user) {
-  return getVehicle(user) || getCachedSheetVehicle(user, null);
+const heroImages = {
+  Moto: "https://images.unsplash.com/photo-1558981806-ec527fa84c39?auto=format&fit=crop&w=1200&q=80",
+  Taxi: "https://images.unsplash.com/photo-1592853625600-5d18dba5f59f?auto=format&fit=crop&w=1200&q=80",
+  Camioneta: "https://images.unsplash.com/photo-1533473359331-0135ef1b58bf?auto=format&fit=crop&w=1200&q=80",
+  default: "https://images.unsplash.com/photo-1503376780353-7e6692767b70?auto=format&fit=crop&w=1200&q=80",
+};
+
+const tabs = [
+  { id: "data", label: "Datos del vehiculo", icon: IdCard },
+  { id: "documents", label: "Vencimientos y avisos", icon: CalendarDays },
+  { id: "maintenance", label: "Mantenimiento", icon: Wrench },
+];
+
+const documentRows = [
+  {
+    label: "SOAT",
+    dateField: "soatExpiry",
+    noticeField: "soatNoticeDays",
+    icon: ShieldCheck,
+    tone: "green",
+  },
+  {
+    label: "Tecnomecanica",
+    dateField: "techReviewExpiry",
+    noticeField: "techReviewNoticeDays",
+    icon: CalendarDays,
+    tone: "amber",
+  },
+  {
+    label: "Licencia de transito",
+    dateField: "licenseExpiry",
+    noticeField: "licenseNoticeDays",
+    icon: IdCard,
+    tone: "green",
+  },
+  {
+    label: "Impuesto vehicular",
+    dateField: "taxExpiry",
+    noticeField: "taxNoticeDays",
+    icon: BadgeCheck,
+    tone: "blue",
+  },
+];
+
+export default function Vehicle({ user, onLogout, onUnsavedChange, onRegisterSave }) {
+  const initialVehicles = useMemo(() => getInitialVehicleList(user), [user]);
+  const [vehicles, setVehicleForms] = useState(initialVehicles);
+  const [activeVehicleId, setActiveVehicleIdState] = useState(() => getInitialActiveVehicleId(user, initialVehicles));
+  const [activeTab, setActiveTab] = useState("documents");
+  const [saved, setSaved] = useState(() => initialVehicles.length > 0 && initialVehicles.every((vehicle) => vehicle.guardado !== false));
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [syncMessage, setSyncMessage] = useState("");
+  const [isVehicleSyncing, setIsVehicleSyncing] = useState(Boolean(user?.email && !getVehicles(user).length));
+  const [openMenuVehicleId, setOpenMenuVehicleId] = useState("");
+  const [openMenuPosition, setOpenMenuPosition] = useState(null);
+  const [addModalOpen, setAddModalOpen] = useState(false);
+  const [newVehicleDraft, setNewVehicleDraft] = useState(() => buildNewVehicleDraft(user));
+  const localMutationVersionRef = useRef(0);
+  const vehiclesRef = useRef(vehicles);
+  const activeVehicleIdRef = useRef(activeVehicleId);
+
+  useEffect(() => {
+    vehiclesRef.current = vehicles;
+  }, [vehicles]);
+
+  useEffect(() => {
+    activeVehicleIdRef.current = activeVehicleId;
+  }, [activeVehicleId]);
+
+  const activeVehicle = useMemo(() => resolveActiveVehicle(vehicles, activeVehicleId), [vehicles, activeVehicleId]);
+  const activeAlerts = useMemo(() => {
+    if (!activeVehicle) return [];
+    return [...buildDocumentAlerts(activeVehicle), ...buildMaintenanceAlerts(activeVehicle)].filter((alert) => alert.tone === "danger" || alert.tone === "warning");
+  }, [activeVehicle]);
+
+  const saveVehicle = useCallback(() => {
+    const currentVehicles = vehiclesRef.current;
+    const currentActiveVehicleId = activeVehicleIdRef.current;
+    const now = new Date().toISOString();
+    const normalizedVehicles = currentVehicles.map((vehicle) =>
+      vehicle.id === currentActiveVehicleId
+        ? {
+            ...vehicle,
+            id: vehicle.id || createId("vehicle"),
+            plate: String(vehicle.plate || "").trim().toUpperCase(),
+            updatedAt: now,
+            guardado: true,
+          }
+        : vehicle,
+    );
+    const savedVehicles = setVehicles(normalizedVehicles, user, { activeVehicleId: currentActiveVehicleId });
+    const savedActiveVehicle = resolveActiveVehicle(savedVehicles, currentActiveVehicleId);
+    const sheetSave = savedActiveVehicle
+      ? saveVehicleToSheet(omitLocalOnlyFields(savedActiveVehicle), user).catch((error) => console.warn("No se pudo guardar vehiculo remoto", error))
+      : Promise.resolve();
+
+    vehiclesRef.current = savedVehicles;
+    setVehicleForms(savedVehicles);
+    setSaved(true);
+    setHasUnsavedChanges(false);
+    setSyncMessage("Vehiculo actualizado.");
+
+    return sheetSave;
+  }, [user]);
+
+  useEffect(() => {
+    onUnsavedChange?.(hasUnsavedChanges);
+    return () => onUnsavedChange?.(false);
+  }, [hasUnsavedChanges, onUnsavedChange]);
+
+  useEffect(() => {
+    onRegisterSave?.(saveVehicle);
+    return () => onRegisterSave?.(null);
+  }, [onRegisterSave, saveVehicle]);
+
+  useEffect(() => {
+    if (!user?.email) return;
+    let isActive = true;
+    const localVehiclesAtStart = getVehicles(user);
+    const localVehicleAtStart = getVehicle(user);
+    const cachedVehicleAtStart = getCachedSheetVehicle(user, localVehicleAtStart);
+    const immediateVehicle = pickNewestVehicle(localVehicleAtStart, cachedVehicleAtStart);
+    const syncStartVersion = localMutationVersionRef.current;
+
+    setIsVehicleSyncing(true);
+
+    if (immediateVehicle && localVehiclesAtStart.length) {
+      const immediateVehicles = mergeVehicleIntoList(localVehiclesAtStart, mergeVehicleLocalOnlyFields(immediateVehicle, localVehicleAtStart));
+      const savedImmediateVehicles = setVehicles(immediateVehicles, user, { activeVehicleId: getActiveVehicleId(user) || immediateVehicle.id });
+      setVehicleForms(savedImmediateVehicles);
+      setActiveVehicleIdState(getInitialActiveVehicleId(user, savedImmediateVehicles));
+      setSaved(true);
+      setHasUnsavedChanges(false);
+      setSyncMessage(cachedVehicleAtStart && !localVehicleAtStart ? "Vehiculo cargado desde cache local." : "");
+    }
+
+    refreshVehicleByUser(user.email)
+      .then((result) => {
+        if (!isActive) return;
+
+        if (result?.ok && result.vehicle) {
+          const currentLocalVehicles = getVehicles(user);
+          const currentLocalVehicle = getVehicle(user) || localVehicleAtStart;
+          const sheetVehicle = mergeVehicleLocalOnlyFields(result.vehicle, currentLocalVehicle);
+          const newestVehicle = pickNewestVehicle(currentLocalVehicle, sheetVehicle);
+
+          if (localMutationVersionRef.current !== syncStartVersion) {
+            setSyncMessage("Datos actualizados disponibles. Conservamos los cambios locales recientes.");
+            return;
+          }
+
+          const savedSheetVehicles = setVehicles(mergeVehicleIntoList(currentLocalVehicles, newestVehicle), user, { activeVehicleId: getActiveVehicleId(user) || newestVehicle.id });
+          setVehicleForms(savedSheetVehicles.length ? savedSheetVehicles : vehiclesRef.current);
+          setActiveVehicleIdState(getInitialActiveVehicleId(user, savedSheetVehicles.length ? savedSheetVehicles : vehiclesRef.current));
+          setSaved(true);
+          setHasUnsavedChanges(false);
+          setSyncMessage(result.cacheHit ? "Vehiculo cargado desde cache local." : "Vehiculo actualizado.");
+          return;
+        }
+
+        if (!localVehiclesAtStart.length && !immediateVehicle) {
+          setSyncMessage("Puedes registrar varios vehiculos y elegir uno como principal.");
+        }
+      })
+      .catch((error) => {
+        if (!isActive) return;
+        console.warn("No se pudo cargar vehiculo remoto", error);
+        setSyncMessage("Usando datos locales del vehiculo.");
+      })
+      .finally(() => {
+        if (isActive) setIsVehicleSyncing(false);
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, [user?.email]);
+
+  function updateActiveVehicleField(field, value) {
+    localMutationVersionRef.current += 1;
+    setVehicleForms((currentVehicles) =>
+      currentVehicles.map((vehicle) =>
+        vehicle.id === activeVehicleId
+          ? {
+              ...vehicle,
+              [field]: value,
+              guardado: false,
+            }
+          : vehicle,
+      ),
+    );
+    setSaved(false);
+    setHasUnsavedChanges(true);
+  }
+
+  function closeVehicleMenu() {
+    setOpenMenuVehicleId("");
+    setOpenMenuPosition(null);
+  }
+
+  function toggleVehicleMenu(vehicleId, event) {
+    if (openMenuVehicleId === vehicleId) {
+      closeVehicleMenu();
+      return;
+    }
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    const menuWidth = 236;
+    const menuHeight = 180;
+    const gap = 8;
+    const viewportWidth = typeof window === "undefined" ? 390 : window.innerWidth;
+    const viewportHeight = typeof window === "undefined" ? 844 : window.innerHeight;
+    const left = Math.max(12, Math.min(rect.right - menuWidth, viewportWidth - menuWidth - 12));
+    const preferredTop = rect.bottom + gap;
+    const top = Math.max(12, Math.min(preferredTop, viewportHeight - menuHeight - 12));
+
+    setOpenMenuVehicleId(vehicleId);
+    setOpenMenuPosition({ left, top });
+  }
+
+  function selectVehicle(vehicleId) {
+    setActiveVehicleIdState(vehicleId);
+    setActiveVehicleId(vehicleId, user);
+    closeVehicleMenu();
+  }
+
+  function markVehicleAsPrincipal(vehicleId) {
+    localMutationVersionRef.current += 1;
+    setVehicleForms((currentVehicles) =>
+      currentVehicles.map((vehicle) => ({
+        ...vehicle,
+        principal: vehicle.id === vehicleId,
+        guardado: vehicle.id === vehicleId ? false : vehicle.guardado,
+      })),
+    );
+    setActiveVehicleIdState(vehicleId);
+    setActiveVehicleId(vehicleId, user);
+    setSaved(false);
+    setHasUnsavedChanges(true);
+    closeVehicleMenu();
+  }
+
+  function deleteVehicle(vehicleId) {
+    if (vehicles.length <= 1) return;
+
+    localMutationVersionRef.current += 1;
+    const nextVehicles = vehicles.filter((vehicle) => vehicle.id !== vehicleId);
+    const nextActiveVehicleId = vehicleId === activeVehicleId ? nextVehicles[0]?.id || "" : activeVehicleId;
+    setVehicleForms(nextVehicles.map((vehicle, index) => ({ ...vehicle, principal: vehicle.principal || index === 0 })));
+    setActiveVehicleIdState(nextActiveVehicleId);
+    setActiveVehicleId(nextActiveVehicleId, user);
+    setSaved(false);
+    setHasUnsavedChanges(true);
+    closeVehicleMenu();
+  }
+
+  function submitVehicle(event) {
+    event.preventDefault();
+    void saveVehicle();
+  }
+
+  function openAddVehicleModal() {
+    setNewVehicleDraft(buildNewVehicleDraft(user));
+    setAddModalOpen(true);
+  }
+
+  function addVehicle(event) {
+    event.preventDefault();
+    const vehicle = {
+      ...defaultVehicle,
+      ...newVehicleDraft,
+      id: createId("vehicle"),
+      plate: String(newVehicleDraft.plate || "").trim().toUpperCase(),
+      city: newVehicleDraft.city || user?.city || "Medellin",
+      principal: vehicles.length === 0,
+      guardado: false,
+    };
+    const nextVehicles = [...vehicles, vehicle];
+
+    localMutationVersionRef.current += 1;
+    setVehicleForms(nextVehicles);
+    setActiveVehicleIdState(vehicle.id);
+    setActiveTab("data");
+    setAddModalOpen(false);
+    setSaved(false);
+    setHasUnsavedChanges(true);
+  }
+
+  function handlePhotoUpload(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file || !activeVehicle) return;
+
+    if (!file.type.startsWith("image/")) {
+      setSyncMessage("Selecciona una imagen valida del vehiculo.");
+      return;
+    }
+
+    resizeVehiclePhoto(file)
+      .then((photoDataUrl) => {
+        const nextVehicles = vehiclesRef.current.map((vehicle) =>
+          vehicle.id === activeVehicleIdRef.current
+            ? {
+                ...vehicle,
+                vehiclePhotoDataUrl: photoDataUrl,
+                vehiclePhotoUpdatedAt: new Date().toISOString(),
+              }
+            : vehicle,
+        );
+
+        try {
+          setVehicles(nextVehicles, user, { activeVehicleId: activeVehicleIdRef.current });
+        } catch (error) {
+          console.warn("No se pudo guardar la foto en localStorage", error);
+          setSyncMessage("La foto pesa demasiado para guardarla en este dispositivo.");
+          return;
+        }
+
+        vehiclesRef.current = nextVehicles;
+        setVehicleForms(nextVehicles);
+        setSyncMessage("Foto guardada solo en este dispositivo.");
+      })
+      .catch((error) => {
+        console.warn("No se pudo procesar la foto del vehiculo", error);
+        setSyncMessage("No se pudo cargar la foto. Intenta con otra imagen.");
+      });
+  }
+
+  function removeVehiclePhoto() {
+    const nextVehicles = vehiclesRef.current.map((vehicle) =>
+      vehicle.id === activeVehicleIdRef.current
+        ? {
+            ...vehicle,
+            vehiclePhotoDataUrl: "",
+            vehiclePhotoUpdatedAt: "",
+          }
+        : vehicle,
+    );
+
+    try {
+      setVehicles(nextVehicles, user, { activeVehicleId: activeVehicleIdRef.current });
+    } catch (error) {
+      console.warn("No se pudo eliminar la foto local", error);
+    }
+
+    vehiclesRef.current = nextVehicles;
+    setVehicleForms(nextVehicles);
+    setSyncMessage("Foto local eliminada.");
+  }
+
+  if (!activeVehicle) {
+    return (
+      <main className="screen-shell">
+        <Header user={user} onLogout={onLogout} title="Mi Vehiculo" subtitle="Gestiona identidad, documentos y mantenimiento desde un solo lugar." />
+        <EmptyVehicleState onAdd={openAddVehicleModal} />
+        {addModalOpen ? (
+          <AddVehicleModal draft={newVehicleDraft} onChange={setNewVehicleDraft} onSubmit={addVehicle} onClose={() => setAddModalOpen(false)} />
+        ) : null}
+      </main>
+    );
+  }
+
+  return (
+    <main className="screen-shell">
+      <Header user={user} onLogout={onLogout} title="Mi Vehiculo" subtitle="Gestiona identidad, documentos y mantenimiento desde un solo lugar." />
+
+      <form id="vehicle-form" className="space-y-4 pb-24" onSubmit={submitVehicle}>
+        <StatusStrip isSyncing={isVehicleSyncing} saved={saved && !hasUnsavedChanges} message={syncMessage} />
+
+        <HeroVehicleCard
+          vehicle={activeVehicle}
+          saved={saved && !hasUnsavedChanges}
+          onPhotoUpload={handlePhotoUpload}
+          onRemovePhoto={removeVehiclePhoto}
+        />
+
+        <VehicleQuickSummary vehicle={activeVehicle} alertCount={activeAlerts.length} />
+
+        <VehicleSwitcher
+          vehicles={vehicles}
+          activeVehicleId={activeVehicle.id}
+          openMenuVehicleId={openMenuVehicleId}
+          openMenuPosition={openMenuPosition}
+          onAdd={openAddVehicleModal}
+          onSelect={selectVehicle}
+          onToggleMenu={toggleVehicleMenu}
+          onCloseMenu={closeVehicleMenu}
+          onMarkPrincipal={markVehicleAsPrincipal}
+          onDelete={deleteVehicle}
+          onEdit={(vehicleId) => {
+            selectVehicle(vehicleId);
+            setActiveTab("data");
+          }}
+          onDetail={(vehicleId) => {
+            selectVehicle(vehicleId);
+            setActiveTab("data");
+          }}
+        />
+
+        <VehicleTabs activeTab={activeTab} onChange={setActiveTab} />
+
+        <section className="rounded-[1.75rem] bg-white/95 p-4 shadow-soft ring-1 ring-slate-100 sm:p-5">
+          {activeTab === "data" ? <DataTab vehicle={activeVehicle} onChange={updateActiveVehicleField} /> : null}
+          {activeTab === "documents" ? <DocumentsTab vehicle={activeVehicle} onChange={updateActiveVehicleField} /> : null}
+          {activeTab === "maintenance" ? <MaintenanceTab vehicle={activeVehicle} onChange={updateActiveVehicleField} /> : null}
+        </section>
+
+        {hasUnsavedChanges ? (
+          <button
+            type="submit"
+            className="fixed bottom-[calc(env(safe-area-inset-bottom)+5.9rem)] right-4 z-30 grid size-16 place-items-center rounded-full bg-black text-white shadow-[0_22px_38px_rgba(0,0,0,0.32)] ring-4 ring-white transition hover:-translate-y-0.5 hover:bg-neutral-900 sm:right-[calc(50%-22rem)]"
+            aria-label="Guardar vehiculo"
+            title="Guardar vehiculo"
+          >
+            <Save size={25} />
+          </button>
+        ) : null}
+      </form>
+
+      {addModalOpen ? (
+        <AddVehicleModal draft={newVehicleDraft} onChange={setNewVehicleDraft} onSubmit={addVehicle} onClose={() => setAddModalOpen(false)} />
+      ) : null}
+    </main>
+  );
+}
+
+function StatusStrip({ isSyncing, saved, message }) {
+  const Icon = isSyncing ? Loader2 : saved ? CheckCircle2 : Bell;
+  const styles = saved || isSyncing ? "bg-emerald-50 text-emerald-950 ring-emerald-100" : "bg-amber-50 text-amber-950 ring-amber-100";
+  const label = isSyncing ? "Sincronizando vehiculos." : saved ? "Vehiculo actualizado." : "Cambios pendientes por guardar.";
+
+  return (
+    <div className={`flex items-center gap-3 rounded-3xl px-4 py-3 font-black shadow-sm ring-1 ${styles}`}>
+      <div className="grid size-10 shrink-0 place-items-center rounded-full bg-white/80 text-black ring-1 ring-black/10">
+        <Icon className={isSyncing ? "animate-spin" : ""} size={20} />
+      </div>
+      <p className="min-w-0 text-sm">{message || label}</p>
+    </div>
+  );
+}
+
+function HeroVehicleCard({ vehicle, saved, onPhotoUpload, onRemovePhoto }) {
+  const heroImage = getVehicleImage(vehicle);
+  const vehicleTitle = getVehicleTitle(vehicle);
+
+  return (
+    <section className="overflow-hidden rounded-[2rem] bg-slate-950 text-white shadow-[0_24px_50px_rgba(15,23,42,0.24)] ring-1 ring-black/5">
+      <div className="relative min-h-[25rem] sm:min-h-[22rem]">
+        <img src={heroImage} alt="" className="absolute inset-0 h-full w-full object-cover opacity-90" />
+        <div className="absolute inset-0 bg-gradient-to-t from-black via-black/45 to-black/10" />
+        <div className="absolute inset-x-0 top-0 flex items-start justify-between gap-3 p-4">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <span className="rounded-2xl bg-yellow-300 px-4 py-2 font-mono text-base font-black uppercase tracking-[0.22em] text-black shadow-lg">
+              {vehicle.plate?.trim() ? vehicle.plate.trim().toUpperCase() : "ABC123"}
+            </span>
+            {vehicle.principal ? <Badge tone="blue">Principal</Badge> : null}
+          </div>
+          <Badge tone={saved || vehicle.guardado ? "green" : "amber"} icon={saved || vehicle.guardado ? CheckCircle2 : Bell}>
+            {saved || vehicle.guardado ? "Guardado" : "Pendiente"}
+          </Badge>
+        </div>
+
+        <div className="relative flex min-h-[25rem] flex-col justify-end p-5 sm:min-h-[22rem]">
+          <div className="max-w-lg">
+            <h2 className="text-4xl font-black leading-none tracking-normal sm:text-5xl">{vehicleTitle}</h2>
+            <p className="mt-2 text-base font-semibold text-white/85">{vehicle.year ? `Modelo ${vehicle.year}` : "Modelo pendiente"}</p>
+          </div>
+
+          <div className="mt-5 grid gap-3 min-[520px]:grid-cols-2">
+            <HeroMetric icon={MapPin} label="Ciudad" value={polishSpanishText(vehicle.city || "Ciudad pendiente")} />
+            <HeroMetric icon={Gauge} label="Kilometraje" value={formatMileage(vehicle.currentMileage)} />
+          </div>
+
+          <div className="mt-4 flex flex-wrap gap-2">
+            <label className="inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-2xl bg-white px-4 py-2 text-sm font-black text-black shadow-sm transition hover:-translate-y-0.5">
+              {vehicle.vehiclePhotoDataUrl ? <Camera size={18} /> : <ImagePlus size={18} />}
+              Subir foto
+              <input type="file" accept="image/*" className="sr-only" onChange={onPhotoUpload} />
+            </label>
+            {vehicle.vehiclePhotoDataUrl ? (
+              <button
+                type="button"
+                onClick={onRemovePhoto}
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl bg-white/12 px-4 py-2 text-sm font-black text-white ring-1 ring-white/25 backdrop-blur transition hover:-translate-y-0.5 hover:bg-white/20"
+              >
+                <Trash2 size={18} />
+                Quitar
+              </button>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function HeroMetric({ icon: Icon, label, value }) {
+  return (
+    <div className="flex min-w-0 items-center gap-3 rounded-3xl bg-black/40 p-3 text-white ring-1 ring-white/15 backdrop-blur-md">
+      <div className="grid size-12 shrink-0 place-items-center rounded-2xl bg-white text-black">
+        <Icon size={21} />
+      </div>
+      <div className="min-w-0">
+        <p className="text-xs font-semibold text-white/75">{label}</p>
+        <p className="truncate text-lg font-black leading-tight">{value}</p>
+      </div>
+    </div>
+  );
+}
+
+function VehicleQuickSummary({ vehicle, alertCount }) {
+  const items = [
+    {
+      icon: CalendarDays,
+      label: "Proximo SOAT",
+      value: formatShortDate(vehicle.soatExpiry),
+      tone: "blue",
+    },
+    {
+      icon: ShieldCheck,
+      label: "Seguro activo",
+      value: vehicle.insuranceExpiry ? `Hasta ${formatShortDate(vehicle.insuranceExpiry)}` : "Sin fecha",
+      tone: "green",
+    },
+    {
+      icon: CalendarDays,
+      label: "Tecnomecanica",
+      value: formatShortDate(vehicle.techReviewExpiry),
+      tone: "purple",
+    },
+    {
+      icon: Bell,
+      label: `${alertCount} alertas`,
+      value: alertCount ? "Revisar hoy" : "Todo al dia",
+      tone: "amber",
+    },
+  ];
+
+  return (
+    <section className="overflow-x-auto rounded-[1.75rem] bg-white/95 p-3 shadow-soft ring-1 ring-slate-100">
+      <div className="grid min-w-[42rem] grid-cols-4 divide-x divide-slate-200">
+        {items.map((item) => (
+          <div key={item.label} className="flex min-w-0 items-center gap-3 px-3 py-2 first:pl-1 last:pr-1">
+            <SoftIcon icon={item.icon} tone={item.tone} />
+            <div className="min-w-0">
+              <p className="truncate text-xs font-black text-slate-950">{item.label}</p>
+              <p className={`truncate text-sm font-black ${getValueToneClass(item.tone)}`}>{item.value}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function VehicleSwitcher({ vehicles, activeVehicleId, openMenuVehicleId, openMenuPosition, onAdd, onSelect, onToggleMenu, onCloseMenu, onMarkPrincipal, onDelete, onEdit, onDetail }) {
+  const openMenuVehicle = vehicles.find((vehicle) => vehicle.id === openMenuVehicleId);
+
+  return (
+    <section className="rounded-[1.75rem] bg-white/95 p-4 shadow-soft ring-1 ring-slate-100">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <h2 className="text-lg font-black text-slate-950">Mis vehiculos</h2>
+        <button type="button" onClick={onAdd} className="primary-button min-h-11 rounded-2xl px-4 py-2">
+          <Plus size={18} />
+          Nuevo vehiculo
+        </button>
+      </div>
+
+      <div className="flex gap-3 overflow-x-auto pb-1">
+        {vehicles.map((vehicle) => (
+          <VehicleMiniCard
+            key={vehicle.id}
+            vehicle={vehicle}
+            active={vehicle.id === activeVehicleId}
+            onSelect={() => onSelect(vehicle.id)}
+            onToggleMenu={(event) => onToggleMenu(vehicle.id, event)}
+          />
+        ))}
+
+        <button
+          type="button"
+          onClick={onAdd}
+          className="grid min-h-[7.4rem] min-w-[8.5rem] place-items-center rounded-3xl border border-dashed border-slate-300 bg-white text-center text-sm font-black text-black transition hover:-translate-y-0.5 hover:border-black"
+        >
+          <span className="grid gap-2">
+            <Plus className="mx-auto" size={25} />
+            Agregar
+          </span>
+        </button>
+      </div>
+
+      {openMenuVehicle ? (
+        <>
+          <button type="button" className="fixed inset-0 z-40 cursor-default bg-transparent" aria-label="Cerrar menu de vehiculo" onClick={onCloseMenu} />
+          <div
+            className="fixed z-50 grid w-[14.75rem] grid-cols-1 gap-1 rounded-2xl bg-white p-2 text-sm font-black text-slate-700 shadow-[0_24px_60px_rgba(15,23,42,0.28)] ring-1 ring-slate-200"
+            style={{
+              left: `${openMenuPosition?.left ?? 12}px`,
+              top: `${openMenuPosition?.top ?? 12}px`,
+            }}
+          >
+            <MenuAction icon={Pencil} label="Editar" onClick={() => onEdit(openMenuVehicle.id)} />
+            <MenuAction icon={Star} label="Marcar como principal" onClick={() => onMarkPrincipal(openMenuVehicle.id)} />
+            <MenuAction icon={ChevronRight} label="Ver detalle" onClick={() => onDetail(openMenuVehicle.id)} />
+            <MenuAction icon={Trash2} label="Eliminar vehiculo" onClick={() => onDelete(openMenuVehicle.id)} disabled={vehicles.length <= 1} danger />
+          </div>
+        </>
+      ) : null}
+    </section>
+  );
+}
+
+function VehicleMiniCard({ vehicle, active, onSelect, onToggleMenu }) {
+  return (
+    <div
+      className={`relative flex min-h-[7.4rem] min-w-[17rem] items-center gap-3 rounded-3xl p-3 shadow-sm ring-1 transition ${
+        active ? "bg-black text-white ring-black shadow-[0_18px_32px_rgba(0,0,0,0.22)]" : "bg-white text-black ring-slate-200 hover:ring-slate-300"
+      }`}
+    >
+      <button type="button" onClick={onSelect} className="flex min-w-0 flex-1 items-center gap-3 text-left">
+        <img src={getVehicleImage(vehicle)} alt="" className="h-16 w-24 shrink-0 rounded-2xl object-cover" />
+        <span className="min-w-0">
+          {vehicle.principal ? (
+            <span className={`mb-1 inline-flex rounded-full px-2.5 py-1 text-[10px] font-black uppercase ${active ? "bg-white text-black" : "bg-black text-white"}`}>
+              Principal
+            </span>
+          ) : null}
+          <span className={`block truncate text-sm font-black ${active ? "text-white" : "text-slate-950"}`}>{getVehicleTitle(vehicle)}</span>
+          <span className={`block truncate text-xs font-semibold ${active ? "text-white/70" : "text-slate-500"}`}>
+            {vehicle.year || "Ano"} - {vehicle.plate || "Sin placa"}
+          </span>
+          <VehicleMiniStatusBadge vehicle={vehicle} />
+        </span>
+      </button>
+
+      <button
+        type="button"
+        onClick={onToggleMenu}
+        className={`grid size-9 shrink-0 place-items-center rounded-2xl ${active ? "text-white hover:bg-white/10" : "text-black hover:bg-slate-100"}`}
+        aria-label="Acciones del vehiculo"
+        title="Acciones"
+      >
+        <EllipsisVertical size={18} />
+      </button>
+
+    </div>
+  );
+}
+
+function VehicleMiniStatusBadge({ vehicle }) {
+  const expiredDocument = useMemo(() => getExpiredDocumentStatus(vehicle), [vehicle]);
+  const [picoStatus, setPicoStatus] = useState(() => ({
+    label: "Sin pico y placa",
+    className: "bg-emerald-50 text-emerald-700",
+  }));
+
+  useEffect(() => {
+    let isActive = true;
+
+    if (expiredDocument) return undefined;
+
+    const city = vehicle.city || vehicle.ciudad || "";
+    const plate = vehicle.plate || vehicle.placa || "";
+    const vehicleType = vehicle.type || vehicle.tipoVehiculo || vehicle.tipo || "particular";
+
+    if (!city || !plate || !vehicleType) {
+      setPicoStatus({
+        label: "Sin pico y placa",
+        className: "bg-emerald-50 text-emerald-700",
+      });
+      return undefined;
+    }
+
+    const cachedRulesPayload = getCachedPicoPlacaRulesPayload();
+
+    checkPicoPlaca({
+      city,
+      vehicleType,
+      plate,
+      date: new Date(),
+      rules: cachedRulesPayload.rules,
+      rulesSource: cachedRulesPayload.source,
+    })
+      .then((result) => {
+        if (!isActive) return;
+        setPicoStatus(
+          result?.aplica
+            ? {
+                label: "Pico y placa hoy",
+                className: "bg-amber-50 text-amber-700",
+              }
+            : {
+                label: "Sin pico y placa",
+                className: "bg-emerald-50 text-emerald-700",
+              },
+        );
+      })
+      .catch(() => {
+        if (!isActive) return;
+        setPicoStatus({
+          label: "Sin pico y placa",
+          className: "bg-emerald-50 text-emerald-700",
+        });
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, [expiredDocument, vehicle]);
+
+  const status = expiredDocument || picoStatus;
+
+  return <span className={`mt-1 inline-flex max-w-full rounded-full px-2.5 py-1 text-[10px] font-black ${status.className}`}>{status.label}</span>;
+}
+
+function getExpiredDocumentStatus(vehicle) {
+  const expiredDocument = documentRows
+    .map((document) => ({
+      label: document.label,
+      days: daysUntil(vehicle[document.dateField]),
+    }))
+    .filter((document) => typeof document.days === "number" && document.days < 0)
+    .sort((left, right) => left.days - right.days)[0];
+
+  if (!expiredDocument) return null;
+
+  return {
+    label: `${getShortDocumentLabel(expiredDocument.label)} vencido`,
+    className: "bg-red-50 text-red-700",
+  };
+}
+
+function getShortDocumentLabel(label) {
+  if (label === "Licencia de transito") return "Licencia";
+  if (label === "Impuesto vehicular") return "Impuesto";
+  return label;
+}
+
+function MenuAction({ icon: Icon, label, onClick, disabled = false, danger = false }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={`flex min-h-10 w-full items-center justify-center gap-1.5 rounded-xl px-2 py-2 text-center transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45 ${danger ? "text-red-600 hover:bg-red-50" : ""}`}
+    >
+      <Icon size={16} />
+      <span className="leading-tight">{label}</span>
+    </button>
+  );
+}
+
+function VehicleTabs({ activeTab, onChange }) {
+  return (
+    <div className="overflow-x-auto rounded-[1.5rem] bg-white/95 p-1 shadow-sm ring-1 ring-slate-200">
+      <div className="grid min-w-[34rem] grid-cols-3 gap-1">
+        {tabs.map((tab) => {
+          const Icon = tab.icon;
+          const active = activeTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => onChange(tab.id)}
+              className={`flex min-h-13 items-center justify-center gap-2 rounded-2xl px-3 py-3 text-sm font-black transition ${
+                active ? "bg-black text-white shadow-[0_14px_26px_rgba(0,0,0,0.22)]" : "bg-white text-slate-600 hover:bg-slate-50 hover:text-black"
+              }`}
+            >
+              <Icon size={18} />
+              <span className="truncate">{tab.label}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function FleetTab({ vehicles, activeVehicleId, onSelect }) {
+  return (
+    <div>
+      <SectionTitle title="Mis vehiculos" detail="Administra todos los vehiculos que tienes registrados." />
+      <div className="grid gap-3">
+        {vehicles.map((vehicle) => (
+          <button
+            key={vehicle.id}
+            type="button"
+            onClick={() => onSelect(vehicle.id)}
+            className={`flex min-w-0 items-center gap-3 rounded-3xl p-3 text-left ring-1 transition hover:-translate-y-0.5 ${
+              vehicle.id === activeVehicleId ? "bg-black text-white ring-black" : "bg-slate-50 text-slate-950 ring-slate-100"
+            }`}
+          >
+            <img src={getVehicleImage(vehicle)} alt="" className="h-16 w-24 shrink-0 rounded-2xl object-cover" />
+            <span className="min-w-0 flex-1">
+              <span className="flex flex-wrap items-center gap-2">
+                <span className="truncate font-black">{getVehicleTitle(vehicle)}</span>
+                {vehicle.principal ? <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-black uppercase text-emerald-700">Principal</span> : null}
+              </span>
+              <span className={`mt-1 block text-xs font-semibold ${vehicle.id === activeVehicleId ? "text-white/70" : "text-slate-500"}`}>
+                {vehicle.plate || "Sin placa"} Â· {vehicle.year || "Ano pendiente"} Â· {polishSpanishText(vehicle.city || "Sin ciudad")}
+              </span>
+            </span>
+            <ChevronRight size={19} />
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DataTab({ vehicle, onChange }) {
+  return (
+    <div>
+      <SectionTitle title="Datos del vehiculo" detail="Identidad, ciudad, combustible y rendimiento." />
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label="Placa">
+          <input className="input uppercase" value={vehicle.plate} onChange={(event) => onChange("plate", event.target.value)} placeholder="ABC123" maxLength={7} />
+        </Field>
+        <Field label="Marca">
+          <input className="input" value={vehicle.brand} onChange={(event) => onChange("brand", event.target.value)} placeholder="GWM" />
+        </Field>
+        <Field label="Modelo">
+          <input className="input" value={vehicle.model} onChange={(event) => onChange("model", event.target.value)} placeholder="M4" />
+        </Field>
+        <Field label="Ano">
+          <input className="input" value={vehicle.year} onChange={(event) => onChange("year", event.target.value)} placeholder="2016" inputMode="numeric" />
+        </Field>
+        <Field label="Tipo de vehiculo">
+          <select className="input" value={vehicle.type} onChange={(event) => onChange("type", event.target.value)}>
+            {vehicleTypeOptions.map((option) => (
+              <option key={option}>{option}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Ciudad">
+          <select className="input" value={vehicle.city} onChange={(event) => onChange("city", event.target.value)}>
+            {cityOptions.map((city) => (
+              <option key={city}>{city}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Combustible">
+          <select className="input" value={vehicle.fuel} onChange={(event) => onChange("fuel", event.target.value)}>
+            {fuelOptions.map((option) => (
+              <option key={option}>{option}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Kilometraje actual">
+          <input className="input" value={vehicle.currentMileage} onChange={(event) => onChange("currentMileage", event.target.value)} placeholder="102760" inputMode="numeric" />
+        </Field>
+        <Field label="Autonomia por galon">
+          <input className="input" value={vehicle.autonomyPerGallon} onChange={(event) => onChange("autonomyPerGallon", event.target.value)} placeholder="38" inputMode="decimal" />
+        </Field>
+      </div>
+    </div>
+  );
+}
+
+function DocumentsTab({ vehicle, onChange }) {
+  const maxNoticeDays = Math.max(0, ...documentRows.map((item) => Number(vehicle[item.noticeField] || 0)));
+  return (
+    <div>
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <SectionTitle title="Vencimientos y avisos" detail="Estados de documentos, Pico y Placa y anticipacion." noMargin />
+        <span className="inline-flex w-fit items-center gap-2 rounded-2xl bg-slate-50 px-3 py-2 text-xs font-black text-slate-600 ring-1 ring-slate-200">
+          <Bell size={15} />
+          Alertas anticipadas: {maxNoticeDays || 15} dias antes
+        </span>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        {documentRows.map((document) => (
+          <DocumentCard key={document.dateField} document={document} vehicle={vehicle} onChange={onChange} />
+        ))}
+        <PicoPreviewCard vehicle={vehicle} />
+        <div className="rounded-3xl bg-slate-50 p-4 ring-1 ring-slate-100 sm:col-span-2">
+          <div className="flex items-center gap-3">
+            <SoftIcon icon={Bell} tone="purple" />
+            <div className="min-w-0 flex-1">
+              <h3 className="font-black text-slate-950">Alertas anticipadas</h3>
+              <p className="mt-1 text-sm font-semibold leading-6 text-slate-500">Recibiras avisos antes del vencimiento de cada documento.</p>
+            </div>
+            <Badge tone="slate">Configurado</Badge>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DocumentCard({ document, vehicle, onChange }) {
+  const Icon = document.icon;
+  const dateValue = vehicle[document.dateField];
+  const noticeValue = vehicle[document.noticeField];
+  const remainingDays = daysUntil(dateValue);
+  const status = getDateBadgeMeta(remainingDays, Number(noticeValue || 15));
+
+  return (
+    <div className="rounded-3xl bg-slate-50 p-4 ring-1 ring-slate-100">
+      <div className="mb-3 flex items-start gap-3">
+        <SoftIcon icon={Icon} tone={document.tone} />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="font-black text-slate-950">{document.label}</h3>
+            <span className={`rounded-full px-2.5 py-1 text-xs font-black ring-1 ${status.className}`}>{status.label}</span>
+          </div>
+          <p className="mt-1 text-sm font-semibold text-slate-500">Vence {formatShortDate(dateValue)}</p>
+        </div>
+        <ChevronRight className="mt-3 text-slate-400" size={19} />
+      </div>
+      <div className="grid gap-2 min-[520px]:grid-cols-[1fr_7.5rem]">
+        <Field label="Vencimiento">
+          <input className="input" type="date" value={dateValue || ""} onChange={(event) => onChange(document.dateField, event.target.value)} />
+        </Field>
+        <Field label="Avisar antes">
+          <input className="input" value={noticeValue ?? ""} onChange={(event) => onChange(document.noticeField, event.target.value)} placeholder="15" inputMode="numeric" />
+        </Field>
+      </div>
+    </div>
+  );
+}
+
+function PicoPreviewCard({ vehicle }) {
+  return (
+    <div className="rounded-3xl bg-slate-50 p-4 ring-1 ring-slate-100">
+      <div className="flex items-center gap-3">
+        <SoftIcon icon={CarFront} tone="blue" />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="font-black text-slate-950">Pico y placa</h3>
+            <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-black text-blue-700 ring-1 ring-blue-100">{getPicoPreview(vehicle)}</span>
+          </div>
+          <p className="mt-1 text-sm font-semibold text-slate-500">Lunes a viernes Â· {polishSpanishText(vehicle.city || "Sin ciudad")}</p>
+        </div>
+        <ChevronRight className="text-slate-400" size={19} />
+      </div>
+    </div>
+  );
+}
+
+function MaintenanceTab({ vehicle, onChange }) {
+  return (
+    <div>
+      <SectionTitle title="Mantenimiento" detail="Control por kilometraje para motor, caja y observaciones." />
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label="Kilometraje actual">
+          <input className="input" value={vehicle.currentMileage} onChange={(event) => onChange("currentMileage", event.target.value)} placeholder="102760" inputMode="numeric" />
+        </Field>
+        <MaintenanceMetric label="Estado aceite motor" currentMileage={vehicle.currentMileage} nextMileage={vehicle.nextEngineOilKm} />
+        <Field label="Ultimo cambio de aceite motor">
+          <input className="input" value={vehicle.lastEngineOilKm} onChange={(event) => onChange("lastEngineOilKm", event.target.value)} placeholder="100000" inputMode="numeric" />
+        </Field>
+        <Field label="Proximo cambio de aceite motor">
+          <input className="input" value={vehicle.nextEngineOilKm} onChange={(event) => onChange("nextEngineOilKm", event.target.value)} placeholder="105000" inputMode="numeric" />
+        </Field>
+        <Field label="Ultimo cambio de aceite caja">
+          <input className="input" value={vehicle.lastGearboxOilKm} onChange={(event) => onChange("lastGearboxOilKm", event.target.value)} placeholder="90000" inputMode="numeric" />
+        </Field>
+        <Field label="Proximo cambio de aceite caja">
+          <input className="input" value={vehicle.nextGearboxOilKm} onChange={(event) => onChange("nextGearboxOilKm", event.target.value)} placeholder="120000" inputMode="numeric" />
+        </Field>
+        <Field label="Observaciones" className="sm:col-span-2">
+          <textarea className="input min-h-28 resize-none" value={vehicle.maintenanceNotes} onChange={(event) => onChange("maintenanceNotes", event.target.value)} placeholder="Notas de taller, repuestos o pendientes." />
+        </Field>
+      </div>
+    </div>
+  );
+}
+
+function MaintenanceMetric({ label, currentMileage, nextMileage }) {
+  const current = Number(currentMileage);
+  const next = Number(nextMileage);
+  const remaining = Number.isFinite(current) && Number.isFinite(next) && current > 0 && next > 0 ? next - current : null;
+  const urgent = remaining !== null && remaining <= 0;
+
+  return (
+    <div className={`rounded-3xl p-4 ring-1 ${urgent ? "bg-red-50 text-red-950 ring-red-100" : "bg-emerald-50 text-emerald-950 ring-emerald-100"}`}>
+      <p className="text-xs font-black uppercase tracking-wide opacity-70">{label}</p>
+      <p className="mt-2 text-lg font-black">{formatRemainingKm(remaining)}</p>
+    </div>
+  );
+}
+
+function AddVehicleModal({ draft, onChange, onSubmit, onClose }) {
+  function updateDraft(field, value) {
+    onChange((current) => ({ ...current, [field]: value }));
+  }
+
+  return (
+    <div className="app-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="add-vehicle-title">
+      <form onSubmit={onSubmit} className="app-modal-panel app-modal-panel-sm overflow-hidden">
+        <div className="flex items-start justify-between gap-3 bg-black p-5 text-white">
+          <div className="min-w-0">
+            <p className="text-xs font-black uppercase tracking-[0.18em] text-white/60">Nuevo registro</p>
+            <h2 id="add-vehicle-title" className="mt-1 text-2xl font-black">
+              Nuevo vehiculo
+            </h2>
+          </div>
+          <button type="button" onClick={onClose} className="grid size-10 shrink-0 place-items-center rounded-2xl bg-white/10 text-white hover:bg-white/20" aria-label="Cerrar">
+            <X size={18} />
+          </button>
+        </div>
+        <div className="grid gap-3 p-5">
+          <Field label="Placa">
+            <input className="input uppercase" value={draft.plate} onChange={(event) => updateDraft("plate", event.target.value)} placeholder="ABC123" maxLength={7} required />
+          </Field>
+          <Field label="Marca">
+            <input className="input" value={draft.brand} onChange={(event) => updateDraft("brand", event.target.value)} placeholder="Mazda" />
+          </Field>
+          <Field label="Modelo">
+            <input className="input" value={draft.model} onChange={(event) => updateDraft("model", event.target.value)} placeholder="3" />
+          </Field>
+          <Field label="Ano">
+            <input className="input" value={draft.year} onChange={(event) => updateDraft("year", event.target.value)} placeholder="2019" inputMode="numeric" />
+          </Field>
+          <Field label="Ciudad">
+            <select className="input" value={draft.city} onChange={(event) => updateDraft("city", event.target.value)}>
+              {cityOptions.map((city) => (
+                <option key={city}>{city}</option>
+              ))}
+            </select>
+          </Field>
+          <div className="grid gap-2 pt-2 sm:grid-cols-2">
+            <button type="button" className="secondary-button" onClick={onClose}>
+              Cancelar
+            </button>
+            <button type="submit" className="primary-button">
+              <CirclePlus size={18} />
+              Agregar
+            </button>
+          </div>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function EmptyVehicleState({ onAdd }) {
+  return (
+    <section className="rounded-[2rem] bg-white/95 p-6 text-center shadow-soft ring-1 ring-slate-100">
+      <div className="mx-auto grid size-16 place-items-center rounded-3xl bg-slate-100 text-black">
+        <CarFront size={30} />
+      </div>
+      <h2 className="mt-4 text-2xl font-black text-slate-950">Registra tu primer vehiculo</h2>
+      <p className="mx-auto mt-2 max-w-sm text-sm font-semibold leading-6 text-slate-500">Guarda documentos, kilometraje y avisos en un solo lugar.</p>
+      <button type="button" onClick={onAdd} className="primary-button mt-5">
+        <Plus size={18} />
+        Nuevo vehiculo
+      </button>
+    </section>
+  );
+}
+
+function SectionTitle({ title, detail, noMargin = false }) {
+  return (
+    <div className={noMargin ? "" : "mb-4"}>
+      <h2 className="text-lg font-black text-slate-950">{title}</h2>
+      <p className="mt-1 text-sm font-semibold leading-6 text-slate-500">{detail}</p>
+    </div>
+  );
+}
+
+function Field({ label, children, className = "" }) {
+  return (
+    <label className={`block ${className}`}>
+      <span className="label mb-1 block">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function SoftIcon({ icon: Icon, tone = "blue" }) {
+  const styles = {
+    blue: "bg-blue-50 text-blue-700 ring-blue-100",
+    green: "bg-emerald-50 text-emerald-700 ring-emerald-100",
+    amber: "bg-amber-50 text-amber-700 ring-amber-100",
+    purple: "bg-violet-50 text-violet-700 ring-violet-100",
+  };
+
+  return (
+    <div className={`grid size-12 shrink-0 place-items-center rounded-2xl ring-1 ${styles[tone] || styles.blue}`}>
+      <Icon size={21} />
+    </div>
+  );
+}
+
+function Badge({ children, tone = "slate", icon: Icon }) {
+  const styles = {
+    blue: "bg-blue-50 text-blue-700 ring-blue-100",
+    green: "bg-emerald-50 text-emerald-700 ring-emerald-100",
+    amber: "bg-amber-50 text-amber-700 ring-amber-100",
+    slate: "bg-slate-100 text-slate-600 ring-slate-200",
+  };
+
+  return (
+    <span className={`inline-flex items-center gap-1.5 rounded-2xl px-3 py-1.5 text-xs font-black uppercase ring-1 ${styles[tone] || styles.slate}`}>
+      {Icon ? <Icon size={14} /> : null}
+      {children}
+    </span>
+  );
+}
+
+function getInitialVehicleList(user) {
+  const storedVehicles = getVehicles(user);
+  if (storedVehicles.length) return storedVehicles;
+
+  const storedVehicle = getVehicle(user) || getCachedSheetVehicle(user, null);
+  if (storedVehicle) {
+    return [
+      {
+        ...defaultVehicle,
+        ...storedVehicle,
+        principal: storedVehicle.principal ?? true,
+        guardado: storedVehicle.guardado ?? true,
+      },
+    ];
+  }
+
+  return buildDemoVehicles(user);
+}
+
+function getInitialActiveVehicleId(user, vehicles) {
+  const storedActiveVehicleId = getActiveVehicleId(user);
+  return storedActiveVehicleId || vehicles.find((vehicle) => vehicle.principal)?.id || vehicles[0]?.id || "";
 }
 
 function getCachedSheetVehicle(user, localVehicle) {
@@ -75,540 +1213,152 @@ function getVehicleUpdatedAt(vehicle) {
   return Number.isNaN(timestamp) ? 0 : timestamp;
 }
 
-const heroImages = {
-  Moto: "https://images.unsplash.com/photo-1558981806-ec527fa84c39?auto=format&fit=crop&w=1200&q=80",
-  Taxi: "https://images.unsplash.com/photo-1592853625600-5d18dba5f59f?auto=format&fit=crop&w=1200&q=80",
-  Camioneta: "https://images.unsplash.com/photo-1533473359331-0135ef1b58bf?auto=format&fit=crop&w=1200&q=80",
-  default: "https://images.unsplash.com/photo-1503376780353-7e6692767b70?auto=format&fit=crop&w=1200&q=80",
-};
-
-const documentRows = [
-  {
-    label: "SOAT",
-    dateField: "soatExpiry",
-    noticeField: "soatNoticeDays",
-  },
-  {
-    label: "Tecnomecánica",
-    dateField: "techReviewExpiry",
-    noticeField: "techReviewNoticeDays",
-  },
-  {
-    label: "Licencia",
-    dateField: "licenseExpiry",
-    noticeField: "licenseNoticeDays",
-  },
-  {
-    label: "Impuesto vehicular",
-    dateField: "taxExpiry",
-    noticeField: "taxNoticeDays",
-  },
-];
-
-export default function Vehicle({ user, onLogout, onUnsavedChange, onRegisterSave }) {
-  const storedVehicle = useMemo(() => getInitialStoredVehicle(user), [user]);
-  const [vehicle, setVehicleForm] = useState(storedVehicle || { ...defaultVehicle, id: createId("vehicle"), city: user?.city || "Medellin" });
-  const [saved, setSaved] = useState(Boolean(storedVehicle));
-  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
-  const [syncMessage, setSyncMessage] = useState("");
-  const [openSection, setOpenSection] = useState("");
-  const [isVehicleSyncing, setIsVehicleSyncing] = useState(Boolean(user?.email && !storedVehicle));
-  const localMutationVersionRef = useRef(0);
-  const vehicleRef = useRef(vehicle);
-
-  useEffect(() => {
-    vehicleRef.current = vehicle;
-  }, [vehicle]);
-
-  const saveVehicle = useCallback(() => {
-    const currentVehicle = vehicleRef.current;
-    const normalizedVehicle = {
-      ...currentVehicle,
-      id: currentVehicle.id || createId("vehicle"),
-      plate: currentVehicle.plate.trim().toUpperCase(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    localMutationVersionRef.current += 1;
-    const savedVehicle = setVehicle(normalizedVehicle, user);
-    vehicleRef.current = savedVehicle;
-    const sheetSave = saveVehicleToSheet(omitLocalOnlyFields(savedVehicle), user).catch((error) => console.warn("No se pudo guardar vehículo remoto", error));
-    setVehicleForm(savedVehicle);
-    setSaved(true);
-    setHasUnsavedChanges(false);
-    setSyncMessage("Vehículo guardado y asociado a tu usuario.");
-
-    return sheetSave;
-  }, [user]);
-
-  useEffect(() => {
-    onUnsavedChange?.(hasUnsavedChanges);
-    return () => onUnsavedChange?.(false);
-  }, [hasUnsavedChanges, onUnsavedChange]);
-
-  useEffect(() => {
-    onRegisterSave?.(saveVehicle);
-    return () => onRegisterSave?.(null);
-  }, [onRegisterSave, saveVehicle]);
-
-  useEffect(() => {
-    if (!user?.email) return;
-    let isActive = true;
-    const localVehicleAtStart = getVehicle(user);
-    const cachedVehicleAtStart = getCachedSheetVehicle(user, localVehicleAtStart);
-    const immediateVehicle = pickNewestVehicle(localVehicleAtStart, cachedVehicleAtStart);
-    const syncStartVersion = localMutationVersionRef.current;
-
-    setIsVehicleSyncing(true);
-
-    if (immediateVehicle) {
-      const savedImmediateVehicle = setVehicle(mergeVehicleLocalOnlyFields(immediateVehicle, localVehicleAtStart), user);
-      setVehicleForm(savedImmediateVehicle);
-      setSaved(true);
-      setHasUnsavedChanges(false);
-      setSyncMessage(cachedVehicleAtStart && !localVehicleAtStart ? "Vehículo cargado desde caché local." : "");
-    }
-
-    refreshVehicleByUser(user.email)
-      .then((result) => {
-        if (!isActive) return;
-
-        if (result?.ok && result.vehicle) {
-          const currentLocalVehicle = getVehicle(user) || localVehicleAtStart;
-          const sheetVehicle = mergeVehicleLocalOnlyFields(result.vehicle, currentLocalVehicle);
-          const newestVehicle = pickNewestVehicle(currentLocalVehicle, sheetVehicle);
-
-          if (localMutationVersionRef.current !== syncStartVersion) {
-            setSyncMessage("Datos actualizados disponibles. Conservamos los cambios locales recientes.");
-            return;
-          }
-
-          const savedSheetVehicle = setVehicle(newestVehicle, user);
-          setVehicleForm(savedSheetVehicle);
-          setSaved(true);
-          setHasUnsavedChanges(false);
-          setSyncMessage(result.cacheHit ? "Vehículo cargado desde caché local." : "Vehículo actualizado.");
-          return;
-        }
-
-        if (!immediateVehicle) {
-          setSyncMessage("No encontramos vehículo guardado. Puedes registrar uno nuevo.");
-        }
-      })
-      .catch((error) => {
-        if (!isActive) return;
-        console.warn("No se pudo cargar vehículo remoto", error);
-        setSyncMessage("Usando datos locales del vehículo.");
-      })
-      .finally(() => {
-        if (isActive) setIsVehicleSyncing(false);
-      });
-
-    return () => {
-      isActive = false;
-    };
-  }, [user?.email]);
-
-  function updateField(field, value) {
-    localMutationVersionRef.current += 1;
-    setVehicleForm((current) => ({ ...current, [field]: value }));
-    setSaved(false);
-    setHasUnsavedChanges(true);
-  }
-
-  function submitVehicle(event) {
-    event.preventDefault();
-    void saveVehicle();
-  }
-
-  function handlePhotoUpload(event) {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
-
-    if (!file.type.startsWith("image/")) {
-      setSyncMessage("Selecciona una imagen válida del vehículo.");
-      return;
-    }
-
-    resizeVehiclePhoto(file)
-      .then((photoDataUrl) => {
-        const localVehicle = {
-          ...vehicleRef.current,
-          vehiclePhotoDataUrl: photoDataUrl,
-          vehiclePhotoUpdatedAt: new Date().toISOString(),
-        };
-
-        try {
-          setVehicle(localVehicle, user);
-        } catch (error) {
-          console.warn("No se pudo guardar la foto en localStorage", error);
-          setSyncMessage("La foto pesa demasiado para guardarla en este dispositivo.");
-          return;
-        }
-
-        localMutationVersionRef.current += 1;
-        setVehicleForm(localVehicle);
-        setSyncMessage("Foto guardada solo en este dispositivo.");
-      })
-      .catch((error) => {
-        console.warn("No se pudo procesar la foto del vehículo", error);
-        setSyncMessage("No se pudo cargar la foto. Intenta con otra imagen.");
-      });
-  }
-
-  function removeVehiclePhoto() {
-    const localVehicle = {
-      ...vehicleRef.current,
-      vehiclePhotoDataUrl: "",
-      vehiclePhotoUpdatedAt: "",
-    };
-
-    try {
-      setVehicle(localVehicle, user);
-    } catch (error) {
-      console.warn("No se pudo eliminar la foto local", error);
-    }
-
-    localMutationVersionRef.current += 1;
-    setVehicleForm(localVehicle);
-    setSyncMessage("Foto local eliminada.");
-  }
-
-  const heroImage = vehicle.vehiclePhotoDataUrl || heroImages[vehicle.type] || heroImages.default;
-  const vehicleTitle = [vehicle.brand || "Marca", vehicle.model || "modelo"].join(" ");
-  const yearLabel = vehicle.year ? `Modelo ${vehicle.year}` : "Modelo pendiente";
-  const mileageLabel = formatMileage(vehicle.currentMileage);
-  const fuelLabel = polishSpanishText(vehicle.fuel || "Combustible pendiente");
-  const cityLabel = polishSpanishText(vehicle.city || user?.city || "Ciudad pendiente");
-  const showVehicleSyncing = isVehicleSyncing && !saved;
-
-  return (
-    <main className="screen-shell">
-      <Header user={user} onLogout={onLogout} title="Mi Vehículo" subtitle="Gestiona identidad, documentos y mantenimiento desde un solo lugar." />
-
-      {syncMessage ? (
-        <p className="mb-4 rounded-2xl bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-700 ring-1 ring-blue-100">{syncMessage}</p>
-      ) : null}
-
-      <form className="space-y-4 pb-20" onSubmit={submitVehicle}>
-        {showVehicleSyncing ? <VehicleLoadingNotice /> : null}
-
-        <fieldset className="m-0 space-y-4 border-0 p-0">
-          <section className="overflow-hidden rounded-[2rem] bg-slate-950 text-white shadow-soft">
-          <div className="relative min-h-[21rem] sm:min-h-[18rem]">
-            <img src={heroImage} alt="" className="absolute inset-0 h-full w-full object-cover opacity-80" />
-            <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/60 to-slate-950/10" />
-            <div className="absolute inset-x-0 top-0 flex items-start justify-between gap-3 p-4">
-              <div className="rounded-2xl bg-white/10 px-3 py-2 text-xs font-black uppercase tracking-[0.16em] text-white ring-1 ring-white/20 backdrop-blur">
-                Vehículo principal
-              </div>
-              <StatusBadge tone={saved ? "success" : "warning"}>{saved ? "Guardado" : "Sin guardar"}</StatusBadge>
-            </div>
-
-            <div className="relative flex min-h-[21rem] flex-col justify-end p-5 sm:min-h-[18rem]">
-              <div className="max-w-xl">
-                <p className="inline-flex rounded-xl bg-yellow-300 px-3 py-1.5 font-mono text-2xl font-black tracking-[0.2em] text-slate-950 shadow-lg sm:text-3xl">
-                  {vehicle.plate?.trim() ? vehicle.plate.trim().toUpperCase() : "ABC123"}
-                </p>
-                <h2 className="mt-4 text-3xl font-black leading-tight sm:text-4xl">{vehicleTitle}</h2>
-                <p className="mt-1 text-sm font-semibold text-slate-200">{yearLabel}</p>
-              </div>
-
-              <div className="mt-5 grid gap-2 sm:grid-cols-3">
-                <HeroMetric icon={MapPin} label="Ciudad" value={cityLabel} />
-                <HeroMetric icon={Fuel} label="Combustible" value={fuelLabel} />
-                <HeroMetric icon={Gauge} label="Kilometraje" value={mileageLabel} />
-              </div>
-
-              <div className="mt-4 flex flex-wrap gap-2">
-                <label className="inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-2xl bg-white px-4 py-2 text-sm font-black text-slate-950 shadow-sm transition hover:-translate-y-0.5">
-                  {vehicle.vehiclePhotoDataUrl ? <Camera size={18} /> : <ImagePlus size={18} />}
-                  {vehicle.vehiclePhotoDataUrl ? "Cambiar foto" : "Subir foto"}
-                  <input type="file" accept="image/*" className="sr-only" onChange={handlePhotoUpload} />
-                </label>
-                {vehicle.vehiclePhotoDataUrl ? (
-                  <button
-                    type="button"
-                    onClick={removeVehiclePhoto}
-                    className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl bg-white/10 px-4 py-2 text-sm font-black text-white ring-1 ring-white/20 backdrop-blur transition hover:-translate-y-0.5 hover:bg-white/20"
-                  >
-                    <Trash2 size={18} />
-                    Quitar foto
-                  </button>
-                ) : null}
-              </div>
-            </div>
-          </div>
-          </section>
-
-          <div className="space-y-3">
-          <Accordion
-            id="data"
-            title="Datos del vehículo"
-            description="Identificación, ciudad, combustible y rendimiento."
-            icon={CarFront}
-            isOpen={openSection === "data"}
-            onToggle={() => setOpenSection((current) => (current === "data" ? "" : "data"))}
-          >
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="Placa">
-                <input className="input uppercase" value={vehicle.plate} onChange={(event) => updateField("plate", event.target.value)} placeholder="ABC123" maxLength={7} />
-              </Field>
-              <Field label="Marca">
-                <input className="input" value={vehicle.brand} onChange={(event) => updateField("brand", event.target.value)} placeholder="Toyota" />
-              </Field>
-              <Field label="Modelo">
-                <input className="input" value={vehicle.model} onChange={(event) => updateField("model", event.target.value)} placeholder="Corolla" />
-              </Field>
-              <Field label="Año">
-                <input className="input" value={vehicle.year} onChange={(event) => updateField("year", event.target.value)} placeholder="2022" inputMode="numeric" />
-              </Field>
-              <Field label="Tipo de vehículo">
-                <select className="input" value={vehicle.type} onChange={(event) => updateField("type", event.target.value)}>
-                  {vehicleTypeOptions.map((option) => (
-                    <option key={option}>{option}</option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="Ciudad">
-                <select className="input" value={vehicle.city} onChange={(event) => updateField("city", event.target.value)}>
-                  {cityOptions.map((city) => (
-                    <option key={city}>{city}</option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="Combustible">
-                <select className="input" value={vehicle.fuel} onChange={(event) => updateField("fuel", event.target.value)}>
-                  {fuelOptions.map((option) => (
-                    <option key={option}>{option}</option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="Kilometraje actual">
-                <input className="input" value={vehicle.currentMileage} onChange={(event) => updateField("currentMileage", event.target.value)} placeholder="45000" inputMode="numeric" />
-              </Field>
-              <Field label="Autonomía por galón">
-                <input className="input" value={vehicle.autonomyPerGallon} onChange={(event) => updateField("autonomyPerGallon", event.target.value)} placeholder="38" inputMode="decimal" />
-              </Field>
-            </div>
-          </Accordion>
-
-          <Accordion
-            id="documents"
-            title="Vencimientos y avisos"
-            description="Fechas críticas y días de anticipación para cada alerta."
-            icon={BadgeCheck}
-            isOpen={openSection === "documents"}
-            onToggle={() => setOpenSection((current) => (current === "documents" ? "" : "documents"))}
-          >
-            <div className="grid gap-3">
-              {documentRows.map((document) => (
-                <DocumentField
-                  key={document.label}
-                  label={document.label}
-                  dateValue={vehicle[document.dateField]}
-                  daysValue={vehicle[document.noticeField]}
-                  onDateChange={(value) => updateField(document.dateField, value)}
-                  onDaysChange={(value) => updateField(document.noticeField, value)}
-                />
-              ))}
-            </div>
-          </Accordion>
-
-          <Accordion
-            id="maintenance"
-            title="Mantenimiento"
-            description="Control por kilometraje para aceite de motor y caja."
-            icon={Wrench}
-            isOpen={openSection === "maintenance"}
-            onToggle={() => setOpenSection((current) => (current === "maintenance" ? "" : "maintenance"))}
-          >
-            <div className="grid gap-3 sm:grid-cols-2">
-              <MaintenanceField
-                label="Aceite motor"
-                value={vehicle.nextEngineOilKm}
-                currentMileage={vehicle.currentMileage}
-                onChange={(value) => updateField("nextEngineOilKm", value)}
-                placeholder="50000"
-              />
-              <MaintenanceField
-                label="Aceite de caja"
-                value={vehicle.nextGearboxOilKm}
-                currentMileage={vehicle.currentMileage}
-                onChange={(value) => updateField("nextGearboxOilKm", value)}
-                placeholder="60000"
-              />
-            </div>
-          </Accordion>
-          </div>
-
-        </fieldset>
-
-        <div className="fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+5.25rem)] z-30 px-4 sm:px-6">
-          <div className="mx-auto max-w-3xl">
-            <button type="submit" className="primary-button w-full shadow-[0_18px_35px_rgba(37,99,235,0.28)]">
-              <Save size={18} />
-              Guardar vehículo
-            </button>
-          </div>
-        </div>
-      </form>
-    </main>
-  );
+function buildDemoVehicles(user) {
+  return [
+    {
+      ...defaultVehicle,
+      id: "vehicle-gwm-m4",
+      userEmail: user?.email || "",
+      plate: "ISW009",
+      brand: "GWM",
+      model: "M4",
+      year: "2016",
+      type: "Camioneta",
+      city: user?.city || "Medellin",
+      fuel: "Gasolina corriente",
+      currentMileage: "102760",
+      autonomyPerGallon: "38",
+      soatExpiry: "2024-11-20",
+      insuranceExpiry: "2024-12-12",
+      techReviewExpiry: "2025-01-15",
+      licenseExpiry: "2027-09-03",
+      lastEngineOilKm: "100000",
+      nextEngineOilKm: "105000",
+      lastGearboxOilKm: "90000",
+      nextGearboxOilKm: "120000",
+      maintenanceNotes: "Revisar frenos y llantas en el proximo servicio.",
+      principal: true,
+      guardado: true,
+    },
+    {
+      ...defaultVehicle,
+      id: "vehicle-mazda-3",
+      userEmail: user?.email || "",
+      plate: "ABC123",
+      brand: "Mazda",
+      model: "3",
+      year: "2019",
+      type: "Carro",
+      city: user?.city || "Medellin",
+      fuel: "Gasolina corriente",
+      currentMileage: "68420",
+      autonomyPerGallon: "42",
+      soatExpiry: "2026-11-20",
+      insuranceExpiry: "2026-12-12",
+      techReviewExpiry: "2027-01-15",
+      licenseExpiry: "2028-09-03",
+      lastEngineOilKm: "65000",
+      nextEngineOilKm: "70000",
+      lastGearboxOilKm: "60000",
+      nextGearboxOilKm: "90000",
+      principal: false,
+      guardado: true,
+    },
+  ];
 }
 
-function VehicleLoadingNotice() {
-  return (
-    <div className="rounded-3xl bg-white/95 p-4 shadow-soft ring-1 ring-blue-100">
-      <div className="flex items-center gap-3">
-        <div className="grid size-11 shrink-0 place-items-center rounded-2xl bg-blue-50 text-blue-600">
-          <Loader2 className="animate-spin" size={20} />
-        </div>
-        <div className="min-w-0">
-          <h2 className="font-black text-slate-950">Sincronizando vehículo</h2>
-          <p className="mt-1 text-sm leading-6 text-slate-500">Puedes avanzar mientras actualizamos los datos.</p>
-        </div>
-      </div>
-    </div>
-  );
+function buildNewVehicleDraft(user) {
+  return {
+    plate: "",
+    brand: "",
+    model: "",
+    year: "",
+    city: user?.city || "Medellin",
+  };
 }
 
-function HeroMetric({ icon: Icon, label, value }) {
-  return (
-    <div className="flex min-w-0 items-center gap-3 rounded-2xl bg-white/10 p-3 text-white ring-1 ring-white/20 backdrop-blur">
-      <div className="grid size-9 shrink-0 place-items-center rounded-xl bg-white/10">
-        <Icon size={17} />
-      </div>
-      <div className="min-w-0">
-        <p className="text-[0.68rem] font-black uppercase tracking-wide text-slate-300">{label}</p>
-        <p className="truncate text-sm font-black">{value}</p>
-      </div>
-    </div>
-  );
+function resolveActiveVehicle(vehicles, activeVehicleId) {
+  return vehicles.find((vehicle) => vehicle.id === activeVehicleId) || vehicles.find((vehicle) => vehicle.principal) || vehicles[0] || null;
 }
 
-function Accordion({ id, title, description, icon: Icon, isOpen, onToggle, children }) {
-  return (
-    <section className="overflow-hidden rounded-3xl border border-white/80 bg-white/95 shadow-soft shadow-slate-200/60 backdrop-blur">
-      <button
-        type="button"
-        id={`${id}-button`}
-        aria-expanded={isOpen}
-        aria-controls={`${id}-content`}
-        onClick={onToggle}
-        className="flex w-full items-center gap-3 p-4 text-left transition hover:bg-slate-50 sm:p-5"
-      >
-        <div className="grid size-11 shrink-0 place-items-center rounded-2xl bg-blue-50 text-blue-600 ring-1 ring-blue-100">
-          <Icon size={21} />
-        </div>
-        <div className="min-w-0 flex-1">
-          <h2 className="text-base font-black text-slate-950">{title}</h2>
-          <p className="mt-0.5 text-sm leading-5 text-slate-500">{description}</p>
-        </div>
-        <ChevronDown className={`shrink-0 text-slate-400 transition ${isOpen ? "rotate-180" : ""}`} size={20} />
-      </button>
+function mergeVehicleIntoList(vehicles, vehicle) {
+  const vehicleList = Array.isArray(vehicles) ? vehicles.filter(Boolean) : [];
+  if (!vehicle) return vehicleList;
 
-      {isOpen ? (
-        <div id={`${id}-content`} role="region" aria-labelledby={`${id}-button`} className="border-t border-slate-100 p-4 pt-5 sm:p-5">
-          {children}
-        </div>
-      ) : null}
-    </section>
-  );
+  const vehicleKey = getVehicleMergeKey(vehicle);
+  const exists = vehicleList.some((item) => getVehicleMergeKey(item) === vehicleKey);
+  const nextVehicle = {
+    ...defaultVehicle,
+    ...vehicle,
+    principal: vehicle.principal ?? !vehicleList.some((item) => item.principal),
+    guardado: vehicle.guardado ?? true,
+  };
+
+  if (!exists) return [nextVehicle, ...vehicleList];
+  return vehicleList.map((item) => (getVehicleMergeKey(item) === vehicleKey ? { ...item, ...nextVehicle } : item));
 }
 
-function Field({ label, children }) {
-  return (
-    <label className="block">
-      <span className="label mb-1 block">{label}</span>
-      {children}
-    </label>
-  );
+function getVehicleMergeKey(vehicle) {
+  return String(vehicle?.id || vehicle?.plate || vehicle?.placa || "").trim().toLowerCase();
 }
 
-function DocumentField({ label, dateValue, daysValue, onDateChange, onDaysChange }) {
-  const remainingDays = daysUntil(dateValue);
-  const noticeDays = Number(daysValue || 30);
-  const badgeTone = getDocumentDaysBadgeTone(remainingDays, noticeDays);
-
-  return (
-    <div className="rounded-3xl bg-slate-50 p-3 ring-1 ring-slate-100">
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-3">
-          <div className="grid size-10 shrink-0 place-items-center rounded-2xl bg-white text-emerald-600 ring-1 ring-emerald-100">
-            <ShieldCheck size={18} />
-          </div>
-          <div className="min-w-0">
-            <p className="font-black text-slate-950">{label}</p>
-            <p className="truncate text-xs font-semibold text-slate-500">{formatShortDate(dateValue)}</p>
-          </div>
-        </div>
-        <span className={`shrink-0 rounded-full px-3 py-1 text-xs font-black ring-1 ${badgeTone}`}>
-          {formatDocumentDaysBadge(remainingDays)}
-        </span>
-      </div>
-      <div className="grid gap-3 sm:grid-cols-[1fr_9rem]">
-        <Field label={`Vencimiento ${label}`}>
-          <input className="input" type="date" value={dateValue || ""} onChange={(event) => onDateChange(event.target.value)} />
-        </Field>
-        <Field label="Avisar antes">
-          <input className="input" value={daysValue ?? ""} onChange={(event) => onDaysChange(event.target.value)} placeholder="30" inputMode="numeric" />
-        </Field>
-      </div>
-    </div>
-  );
+function getVehicleImage(vehicle) {
+  return vehicle.vehiclePhotoDataUrl || vehicle.fotoUrl || vehicle.photoUrl || heroImages[vehicle.type] || heroImages.default;
 }
 
-function getDocumentDaysBadgeTone(days, noticeDays) {
-  if (days === null) return "bg-slate-100 text-slate-600 ring-slate-200";
-  if (days < 0) return "bg-red-50 text-red-700 ring-red-100";
-  if (days <= noticeDays) return "bg-amber-50 text-amber-700 ring-amber-100";
-  return "bg-emerald-50 text-emerald-700 ring-emerald-100";
-}
-
-function formatDocumentDaysBadge(days) {
-  if (days === null) return "Sin fecha";
-  if (days === 0) return "Vence hoy";
-  if (days === 1) return "Falta 1 día";
-  if (days > 1) return `Faltan ${days.toLocaleString("es-CO")} días`;
-  if (days === -1) return "Vencido ayer";
-  return `Vencido hace ${Math.abs(days).toLocaleString("es-CO")} días`;
-}
-
-function MaintenanceField({ label, value, currentMileage, onChange, placeholder }) {
-  const current = Number(currentMileage);
-  const next = Number(value);
-  const remaining = Number.isFinite(current) && Number.isFinite(next) && current > 0 && next > 0 ? next - current : null;
-
-  return (
-    <div className="rounded-3xl bg-slate-50 p-3 ring-1 ring-slate-100">
-      <div className="mb-3 flex items-center gap-3">
-        <div className="grid size-10 shrink-0 place-items-center rounded-2xl bg-white text-amber-600 ring-1 ring-amber-100">
-          <CalendarClock size={18} />
-        </div>
-        <div className="min-w-0">
-          <p className="font-black text-slate-950">{label}</p>
-          <p className="text-xs font-semibold text-slate-500">{formatRemainingKm(remaining)}</p>
-        </div>
-      </div>
-      <Field label="Proximo servicio por km">
-        <input className="input" value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} inputMode="numeric" />
-      </Field>
-    </div>
-  );
-}
-
-function formatRemainingKm(value) {
-  if (value === null) return "Ingresa kilometraje actual y próximo servicio";
-  if (value < 0) return "Servicio vencido por kilometraje";
-  return `Faltan ${value.toLocaleString("es-CO")} km`;
+function getVehicleTitle(vehicle) {
+  return [vehicle.brand || "Marca", vehicle.model || "modelo"].join(" ").trim();
 }
 
 function formatMileage(value) {
   const mileage = Number(value);
   if (!value || !Number.isFinite(mileage)) return "Kilometraje pendiente";
   return `${mileage.toLocaleString("es-CO")} km`;
+}
+
+function getValueToneClass(tone) {
+  const styles = {
+    blue: "text-blue-700",
+    green: "text-emerald-700",
+    amber: "text-amber-700",
+    purple: "text-violet-700",
+  };
+  return styles[tone] || "text-slate-700";
+}
+
+function getDateBadgeMeta(days, noticeDays) {
+  if (days === null) return { label: "Sin fecha", className: "bg-slate-100 text-slate-600 ring-slate-200" };
+  if (days < 0) return { label: "Vencido", className: "bg-red-50 text-red-700 ring-red-100" };
+  if (days <= noticeDays) return { label: "Proxima", className: "bg-amber-50 text-amber-700 ring-amber-100" };
+  return { label: "Vigente", className: "bg-emerald-50 text-emerald-700 ring-emerald-100" };
+}
+
+function getPicoPreview(vehicle) {
+  const city = normalizeCity(vehicle.city);
+  const weekday = new Date().getDay();
+  const medellinSchedule = {
+    1: "6 - 9",
+    2: "5 - 7",
+    3: "1 - 4",
+    4: "8 - 0",
+    5: "2 - 3",
+  };
+
+  if (city === "medellin" && medellinSchedule[weekday]) return `Hoy: ${medellinSchedule[weekday]}`;
+  return "Ver en Home";
+}
+
+function normalizeCity(value = "") {
+  return String(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function formatRemainingKm(value) {
+  if (value === null) return "Ingresa kilometraje";
+  if (value < 0) return `Vencido por ${Math.abs(value).toLocaleString("es-CO")} km`;
+  return `Faltan ${value.toLocaleString("es-CO")} km`;
 }
 
 function omitLocalOnlyFields(vehicle) {
@@ -649,7 +1399,7 @@ function resizeVehiclePhoto(file) {
         resolve(canvas.toDataURL("image/jpeg", 0.82));
       };
 
-      image.onerror = () => reject(new Error("Imagen inválida."));
+      image.onerror = () => reject(new Error("Imagen invalida."));
       image.src = reader.result;
     };
 
@@ -657,3 +1407,4 @@ function resizeVehiclePhoto(file) {
     reader.readAsDataURL(file);
   });
 }
+

@@ -24,7 +24,19 @@ function getVehicleKey(userOrEmail) {
   return email ? `${KEYS.vehicle}:${email}` : "";
 }
 
+function getVehiclesKey(userOrEmail) {
+  const email = normalizeUserEmail(userOrEmail) || getCurrentUserEmail();
+  return email ? `${KEYS.vehicles}:${email}` : KEYS.vehicles;
+}
+
+function getActiveVehicleIdKey(userOrEmail) {
+  const email = normalizeUserEmail(userOrEmail) || getCurrentUserEmail();
+  return email ? `${KEYS.activeVehicleId}:${email}` : KEYS.activeVehicleId;
+}
+
 function readJSON(key, fallback) {
+  if (typeof window === "undefined" || !key) return fallback;
+
   try {
     const value = localStorage.getItem(key);
     return value ? JSON.parse(value) : fallback;
@@ -34,6 +46,7 @@ function readJSON(key, fallback) {
 }
 
 function writeJSON(key, value) {
+  if (typeof window === "undefined" || !key) return;
   localStorage.setItem(key, JSON.stringify(value));
 }
 
@@ -77,12 +90,16 @@ function normalizeVehicle(vehicle) {
     techReviewExpiry: normalizeVehicleDate(pickVehicleValue(vehicle, ["techReviewExpiry", "tecnomecanicaVence", "techReviewVence"])),
     licenseExpiry: normalizeVehicleDate(pickVehicleValue(vehicle, ["licenseExpiry", "licenciaVence"])),
     taxExpiry: normalizeVehicleDate(pickVehicleValue(vehicle, ["taxExpiry", "impuestoVence"])),
+    insuranceExpiry: normalizeVehicleDate(pickVehicleValue(vehicle, ["insuranceExpiry", "seguroVence"])),
     soatNoticeDays: pickVehicleValue(vehicle, ["soatNoticeDays", "soatAvisoDias"]) || "30",
     techReviewNoticeDays: pickVehicleValue(vehicle, ["techReviewNoticeDays", "tecnomecanicaAvisoDias", "techReviewAvisoDias"]) || "30",
     licenseNoticeDays: pickVehicleValue(vehicle, ["licenseNoticeDays", "licenciaAvisoDias"]) || "30",
     taxNoticeDays: pickVehicleValue(vehicle, ["taxNoticeDays", "impuestoAvisoDias"]) || "30",
+    lastEngineOilKm: pickVehicleValue(vehicle, ["lastEngineOilKm", "ultimoAceiteMotorKm"]) || "",
     nextEngineOilKm: pickVehicleValue(vehicle, ["nextEngineOilKm", "proximoAceiteMotorKm"]) || "",
+    lastGearboxOilKm: pickVehicleValue(vehicle, ["lastGearboxOilKm", "ultimoAceiteCajaKm"]) || "",
     nextGearboxOilKm: pickVehicleValue(vehicle, ["nextGearboxOilKm", "proximoAceiteCajaKm"]) || "",
+    maintenanceNotes: pickVehicleValue(vehicle, ["maintenanceNotes", "observaciones"]) || "",
   };
 }
 
@@ -150,8 +167,111 @@ function getLegacyVehicleFromList() {
   return null;
 }
 
+function normalizeVehicleList(vehicles, userOrEmail) {
+  const email = normalizeUserEmail(userOrEmail) || getCurrentUserEmail();
+  const normalizedVehicles = (Array.isArray(vehicles) ? vehicles : [])
+    .map((vehicle) => normalizeVehicle(email ? { ...vehicle, userEmail: email } : vehicle))
+    .filter(Boolean);
+
+  return ensureSinglePrincipal(dedupeVehicles(normalizedVehicles));
+}
+
+function dedupeVehicles(vehicles) {
+  const seen = new Set();
+  return vehicles.filter((vehicle) => {
+    const key = String(vehicle.id || vehicle.plate || "").trim().toLowerCase();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function ensureSinglePrincipal(vehicles) {
+  if (!vehicles.length) return [];
+  const principalIndex = vehicles.findIndex((vehicle) => vehicle.principal);
+  const safePrincipalIndex = principalIndex >= 0 ? principalIndex : 0;
+
+  return vehicles.map((vehicle, index) => ({
+    ...vehicle,
+    principal: index === safePrincipalIndex,
+  }));
+}
+
+function getScopedVehicles(userOrEmail) {
+  const vehicles = readJSON(getVehiclesKey(userOrEmail), null);
+  return Array.isArray(vehicles) ? normalizeVehicleList(vehicles, userOrEmail) : [];
+}
+
+export function getVehicles(userOrEmail) {
+  const email = normalizeUserEmail(userOrEmail) || getCurrentUserEmail();
+  const scopedVehicles = getScopedVehicles(email);
+
+  if (scopedVehicles.length) return scopedVehicles;
+
+  const scopedSingleVehicle = normalizeVehicle(readJSON(getVehicleKey(email), null));
+  if (scopedSingleVehicle) {
+    return setVehicles([scopedSingleVehicle], email, { activeVehicleId: scopedSingleVehicle.id, silent: true });
+  }
+
+  const legacySingleVehicle = normalizeVehicle(readJSON(KEYS.vehicle, null));
+  if (legacySingleVehicle && (!email || normalizeUserEmail(legacySingleVehicle.userEmail) === email)) {
+    return setVehicles([legacySingleVehicle], email, { activeVehicleId: legacySingleVehicle.id, silent: true });
+  }
+
+  const legacyVehicles = normalizeVehicleList(readJSON(KEYS.vehicles, null), email).filter((vehicle) => !email || normalizeUserEmail(vehicle.userEmail) === email);
+  if (legacyVehicles.length) {
+    return setVehicles(legacyVehicles, email, { activeVehicleId: getActiveVehicleId(email) || legacyVehicles[0].id, silent: true });
+  }
+
+  return [];
+}
+
+export function setVehicles(vehicles, userOrEmail, options = {}) {
+  const email = normalizeUserEmail(userOrEmail) || getCurrentUserEmail();
+  const normalizedVehicles = normalizeVehicleList(vehicles, email);
+  const activeVehicleId = options.activeVehicleId || getActiveVehicleId(email) || normalizedVehicles.find((vehicle) => vehicle.principal)?.id || normalizedVehicles[0]?.id || "";
+
+  writeJSON(getVehiclesKey(email), normalizedVehicles);
+
+  if (activeVehicleId && typeof window !== "undefined") {
+    localStorage.setItem(getActiveVehicleIdKey(email), activeVehicleId);
+  }
+
+  const activeVehicle = normalizedVehicles.find((vehicle) => vehicle.id === activeVehicleId) || normalizedVehicles.find((vehicle) => vehicle.principal) || normalizedVehicles[0] || null;
+  if (activeVehicle) {
+    writeJSON(getVehicleKey(email), activeVehicle);
+  }
+
+  if (!options.silent && typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("copilot:vehicles-updated", { detail: { email, vehicles: normalizedVehicles, activeVehicleId } }));
+    window.dispatchEvent(new CustomEvent("copilot:vehicle-updated", { detail: { email, vehicle: activeVehicle } }));
+  }
+
+  return normalizedVehicles;
+}
+
+export function getActiveVehicleId(userOrEmail) {
+  if (typeof window === "undefined") return "";
+  return localStorage.getItem(getActiveVehicleIdKey(userOrEmail)) || "";
+}
+
+export function setActiveVehicleId(vehicleId, userOrEmail) {
+  const email = normalizeUserEmail(userOrEmail) || getCurrentUserEmail();
+  if (typeof window !== "undefined" && vehicleId) {
+    localStorage.setItem(getActiveVehicleIdKey(email), vehicleId);
+    window.dispatchEvent(new CustomEvent("copilot:active-vehicle-updated", { detail: { email, activeVehicleId: vehicleId } }));
+  }
+  return vehicleId;
+}
+
 export function getVehicle(userOrEmail) {
   const email = normalizeUserEmail(userOrEmail) || getCurrentUserEmail();
+  const vehicles = getScopedVehicles(email);
+  if (vehicles.length) {
+    const activeVehicleId = getActiveVehicleId(email);
+    return vehicles.find((vehicle) => vehicle.id === activeVehicleId) || vehicles.find((vehicle) => vehicle.principal) || vehicles[0];
+  }
+
   const scopedKey = getVehicleKey(email);
   const savedVehicle = scopedKey ? normalizeVehicle(readJSON(scopedKey, null)) : null;
   if (savedVehicle) return savedVehicle;
@@ -181,11 +301,18 @@ export function setVehicle(vehicle, userOrEmail) {
   }
 
   if (normalizedVehicle?.id) {
-    localStorage.setItem(`${KEYS.activeVehicleId}:${email}`, normalizedVehicle.id);
+    const currentVehicles = getScopedVehicles(email);
+    const nextVehicles = currentVehicles.some((currentVehicle) => currentVehicle.id === normalizedVehicle.id)
+      ? currentVehicles.map((currentVehicle) => (currentVehicle.id === normalizedVehicle.id ? normalizedVehicle : currentVehicle))
+      : [normalizedVehicle, ...currentVehicles];
+
+    setVehicles(nextVehicles, email, { activeVehicleId: normalizedVehicle.id, silent: true });
+    localStorage.setItem(getActiveVehicleIdKey(email), normalizedVehicle.id);
   }
 
   if (typeof window !== "undefined") {
     window.dispatchEvent(new CustomEvent("copilot:vehicle-updated", { detail: { email, vehicle: normalizedVehicle } }));
+    window.dispatchEvent(new CustomEvent("copilot:vehicles-updated", { detail: { email, vehicles: getScopedVehicles(email), activeVehicleId: normalizedVehicle?.id } }));
   }
 
   return normalizedVehicle;

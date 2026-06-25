@@ -226,13 +226,14 @@ export default function Travel({ user, onLogout }) {
   useEffect(() => {
     const resizeTimer = window.setTimeout(() => {
       mapRef.current?.resize();
-      if (isNavigating && navigationPosition) {
-        followNavigationCamera(navigationPosition, { immediate: true });
+      const latestPosition = latestMapDataRef.current.navigationPosition;
+      if (isNavigating && latestPosition) {
+        followNavigationCamera(latestPosition, { force: true, immediate: true });
       }
     }, 120);
 
     return () => window.clearTimeout(resizeTimer);
-  }, [isNavigating, navigationFullscreen, navigationPosition?.lat, navigationPosition?.lng]);
+  }, [isNavigating, navigationFullscreen, mapRevision]);
 
   useEffect(() => {
     const previousBodyOverflow = document.body.style.overflow;
@@ -706,9 +707,12 @@ export default function Travel({ user, onLogout }) {
 
     const route = selectedRouteRef.current;
     const progress = getNavigationProgress(route, nextPosition);
+    const displayPosition = getSnappedNavigationPosition(nextPosition, progress);
     const trackedPosition = {
-      ...nextPosition,
-      heading: resolveNavigationBearing(nextPosition, route, progress),
+      ...displayPosition,
+      rawLng: nextPosition.lng,
+      rawLat: nextPosition.lat,
+      heading: resolveNavigationBearing(displayPosition, route, progress),
     };
 
     setNavigationPosition(trackedPosition);
@@ -734,9 +738,10 @@ export default function Travel({ user, onLogout }) {
       return;
     }
 
-    if (progress.currentStep?.id && lastSpokenStepIdRef.current !== progress.currentStep.id) {
-      lastSpokenStepIdRef.current = progress.currentStep.id;
-      speakInstruction(progress.currentStep.instruction);
+    const voiceInstruction = getNavigationVoiceInstruction(progress, trackedPosition);
+    if (voiceInstruction?.id && lastSpokenStepIdRef.current !== voiceInstruction.id) {
+      lastSpokenStepIdRef.current = voiceInstruction.id;
+      speakInstruction(voiceInstruction.text);
     }
 
     if (progress.offRoute) {
@@ -770,6 +775,7 @@ export default function Travel({ user, onLogout }) {
         lat: position.lat,
       });
       setOriginQuery("Ubicacion actual");
+      lastSpokenStepIdRef.current = "";
       setStatusMessage("Ruta recalculada.");
       speakInstruction("Ruta recalculada.");
     } catch (error) {
@@ -928,18 +934,16 @@ export default function Travel({ user, onLogout }) {
 
     pendingNavigationCameraRef.current = null;
 
-    const currentCenter = map.getCenter();
-    const distanceFromCenterMeters = getDistanceMeters({ lng: currentCenter.lng, lat: currentCenter.lat }, position);
     const now = Date.now();
     const hasFollowedBefore = lastCameraFollowAtRef.current > 0;
     const elapsed = hasFollowedBefore ? now - lastCameraFollowAtRef.current : 0;
-    const shouldJump = options.immediate || !hasFollowedBefore || distanceFromCenterMeters > 180;
     const targetZoom = Number(position.speed || 0) > 11 ? 16.9 : 17.25;
     const targetBearing = Number.isFinite(position.heading) ? position.heading : map.getBearing();
     const targetOffset = getNavigationCameraOffset(map);
+    const screenDelta = getNavigationScreenDelta(map, position, targetOffset);
+    const shouldJump = options.immediate || !hasFollowedBefore || screenDelta > getNavigationJumpThreshold(map);
 
     lastCameraFollowAtRef.current = now;
-    map.stop();
 
     const camera = {
       center: [position.lng, position.lat],
@@ -957,8 +961,8 @@ export default function Travel({ user, onLogout }) {
 
     map.easeTo({
       ...camera,
-      duration: Math.max(280, Math.min(840, elapsed || 520)),
-      easing: (progress) => 1 - Math.pow(1 - progress, 3),
+      duration: Math.max(850, Math.min(1600, elapsed ? elapsed * 1.2 : 1050)),
+      easing: (progress) => progress,
     });
   }
 
@@ -1141,6 +1145,10 @@ export default function Travel({ user, onLogout }) {
               onDimensionChange={setMapDimension}
             />
 
+            {isNavigating ? (
+              <MapNavigationInstruction snapshot={navigationSnapshot} isRerouting={isRerouting} />
+            ) : null}
+
             {routePanelMinimized ? (
               <div className="absolute inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+4.85rem)] z-30 px-3">
                 <div className="mx-auto max-w-3xl">
@@ -1314,6 +1322,25 @@ function PicoPlacaBadge({ state }) {
       <CheckCircle2 size={11} />
       Sin pico y placa
     </span>
+  );
+}
+
+function MapNavigationInstruction({ snapshot, isRerouting }) {
+  const instruction = getNavigationInstructionText(snapshot);
+  const distanceLabel = getNavigationDistanceLabel(snapshot);
+
+  return (
+    <div className="pointer-events-none absolute inset-x-3 top-[calc(env(safe-area-inset-top)+5.25rem)] z-20">
+      <section className="pointer-events-auto mx-auto flex max-w-3xl items-center gap-2 rounded-2xl bg-slate-950/92 px-3 py-2 text-white shadow-[0_16px_42px_rgba(2,6,23,0.34)] ring-1 ring-white/10 backdrop-blur">
+        <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-blue-600 text-white">
+          <Navigation size={19} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-[0.64rem] font-black uppercase tracking-[0.16em] text-blue-200">{isRerouting ? "Recalculando" : distanceLabel}</p>
+          <h2 className="truncate text-sm font-black leading-tight">{instruction}</h2>
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -1650,6 +1677,7 @@ function MapboxSetupNotice({ isLoading }) {
 
 function NavigationPanel({ snapshot, position, isRerouting, voiceEnabled, onToggleVoice, onStop, fullscreen = false }) {
   const speedKmh = position?.speed ? Math.round(position.speed * 3.6) : 0;
+  const instruction = getNavigationInstructionText(snapshot);
 
   return (
     <section className={fullscreen ? "absolute inset-x-0 bottom-0 z-20 rounded-t-[1.5rem] border-t border-white/10 bg-[#020617] text-white shadow-[0_-28px_70px_rgba(2,6,23,0.88)] ring-1 ring-black/70 pb-[calc(env(safe-area-inset-bottom)+0.75rem)]" : "overflow-hidden rounded-[1.75rem] bg-slate-950 text-white shadow-soft"}>
@@ -1657,7 +1685,7 @@ function NavigationPanel({ snapshot, position, isRerouting, voiceEnabled, onTogg
         <div className={fullscreen ? "mb-3 flex items-start justify-between gap-3" : "mb-4 flex items-start justify-between gap-3"}>
           <div className="min-w-0">
             <p className="text-xs font-black uppercase tracking-[0.18em] text-blue-200">{isRerouting ? "Recalculando" : "Navegacion"}</p>
-            <h2 className={fullscreen ? "mt-1 line-clamp-2 text-lg font-black leading-tight" : "mt-1 text-xl font-black leading-tight"}>{snapshot?.currentStep?.instruction || "Esperando GPS..."}</h2>
+            <h2 className={fullscreen ? "mt-1 line-clamp-2 text-lg font-black leading-tight" : "mt-1 text-xl font-black leading-tight"}>{instruction}</h2>
           </div>
           <button
             type="button"
@@ -1700,7 +1728,7 @@ function NavigationMetric({ label, value }) {
 }
 
 const ActiveNavigationCard = forwardRef(function ActiveNavigationCard({ snapshot, isNavigating, onOpen, onStop }, ref) {
-  const title = isNavigating ? snapshot?.currentStep?.instruction || "Esperando ubicacion GPS" : "GPS sin seguimiento";
+  const title = isNavigating ? getNavigationInstructionText(snapshot) : "GPS sin seguimiento";
   const stateLabel = isNavigating ? (snapshot?.offRoute ? "Ajustando" : "En ruta") : "Revisar GPS";
 
   return (
@@ -1902,15 +1930,19 @@ function getNavigationProgress(route, position) {
 
   const routeCoordinates = route.geometry.coordinates;
   const nearest = findNearestRoutePoint(routeCoordinates, position);
-  const traveledMeters = getDistanceAlongRoute(routeCoordinates, nearest.index);
+  const traveledMeters = nearest.traveledMeters;
   const remainingMeters = Math.max(0, Number(route.distanceMeters || 0) - traveledMeters);
-  const currentStep = getCurrentNavigationStep(route.steps || [], traveledMeters);
-  const distanceToManeuverMeters = currentStep ? Math.max(0, currentStep.endMeters - traveledMeters) : remainingMeters;
+  const stepState = getNavigationStepState(route.steps || [], traveledMeters);
+  const currentStep = stepState.currentStep;
+  const upcomingStep = stepState.upcomingStep || currentStep;
+  const distanceToManeuverMeters = stepState.upcomingStep && currentStep ? Math.max(0, currentStep.endMeters - traveledMeters) : remainingMeters;
 
   return {
     currentStep,
+    upcomingStep,
     distanceToManeuverMeters,
     nearestRouteIndex: nearest.index,
+    snappedPosition: nearest.position,
     nearestDistanceMeters: nearest.distanceMeters,
     offRoute: nearest.distanceMeters > 90,
     remainingMeters,
@@ -1918,6 +1950,29 @@ function getNavigationProgress(route, position) {
     progress: route.distanceMeters ? Math.min(1, traveledMeters / route.distanceMeters) : 0,
     arrived: remainingMeters < 45,
   };
+}
+
+function getSnappedNavigationPosition(position, progress) {
+  if (!hasCoordinates(position) || !hasCoordinates(progress?.snappedPosition)) return position;
+  const distanceMeters = Number(progress.nearestDistanceMeters);
+  const snapThreshold = getNavigationSnapThreshold(position);
+
+  if (!Number.isFinite(distanceMeters) || distanceMeters > snapThreshold) return position;
+
+  return {
+    ...position,
+    lng: progress.snappedPosition.lng,
+    lat: progress.snappedPosition.lat,
+    snapped: true,
+    rawLng: position.lng,
+    rawLat: position.lat,
+  };
+}
+
+function getNavigationSnapThreshold(position) {
+  const accuracy = Number(position?.accuracy);
+  if (!Number.isFinite(accuracy)) return 55;
+  return Math.max(35, Math.min(85, accuracy + 18));
 }
 
 function getRemainingRouteGeometry(routeItem, progress, position) {
@@ -1950,40 +2005,140 @@ function compactRouteCoordinates(coordinates) {
   });
 }
 
+function getNavigationInstructionText(snapshot) {
+  return snapshot?.upcomingStep?.instruction || snapshot?.currentStep?.instruction || "Esperando ubicacion GPS";
+}
+
+function getNavigationDistanceLabel(snapshot) {
+  if (!snapshot) return "Esperando GPS";
+  if (snapshot.offRoute) return "Ajustando ruta";
+
+  const distance = Number(snapshot.distanceToManeuverMeters);
+  if (!Number.isFinite(distance)) return "En ruta";
+  if (distance <= 25) return "Ahora";
+  return `En ${formatMeters(distance)}`;
+}
+
+function getNavigationVoiceInstruction(progress, position) {
+  const upcomingStep = progress?.upcomingStep;
+  const distance = Number(progress?.distanceToManeuverMeters);
+  if (!upcomingStep?.instruction || !Number.isFinite(distance)) return null;
+
+  const speed = Number.isFinite(position?.speed) ? Math.max(0, position.speed) : 0;
+  const preparationDistance = getVoicePreparationDistance(speed);
+  const phase = distance <= 35 ? "now" : distance <= preparationDistance ? "prepare" : "";
+  if (!phase) return null;
+
+  return {
+    id: `${upcomingStep.id}:${phase}`,
+    text: phase === "now" ? upcomingStep.instruction : `En ${formatMeters(distance)}, ${lowercaseFirst(upcomingStep.instruction)}`,
+  };
+}
+
+function getVoicePreparationDistance(speedMetersPerSecond) {
+  return Math.max(85, Math.min(220, 70 + speedMetersPerSecond * 9));
+}
+
+function lowercaseFirst(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  return `${text.charAt(0).toLowerCase()}${text.slice(1)}`;
+}
+
 function findNearestRoutePoint(routeCoordinates, position) {
-  return routeCoordinates.reduce(
-    (best, coordinate, index) => {
-      const distanceMeters = getDistanceMeters({ lng: coordinate[0], lat: coordinate[1] }, position);
-      return distanceMeters < best.distanceMeters ? { index, distanceMeters } : best;
-    },
-    { index: 0, distanceMeters: Number.POSITIVE_INFINITY },
-  );
-}
+  let best = {
+    index: 0,
+    position: hasCoordinates(position) ? position : null,
+    distanceMeters: Number.POSITIVE_INFINITY,
+    traveledMeters: 0,
+  };
+  let traveledBeforeSegment = 0;
 
-function getDistanceAlongRoute(routeCoordinates, endIndex) {
-  let total = 0;
-  for (let index = 1; index <= endIndex; index += 1) {
-    total += getDistanceMeters({ lng: routeCoordinates[index - 1][0], lat: routeCoordinates[index - 1][1] }, { lng: routeCoordinates[index][0], lat: routeCoordinates[index][1] });
+  for (let index = 0; index < routeCoordinates.length - 1; index += 1) {
+    const start = routeCoordinates[index];
+    const end = routeCoordinates[index + 1];
+    if (!isValidRouteCoordinate(start) || !isValidRouteCoordinate(end)) continue;
+
+    const segment = getNearestPointOnSegment(position, start, end);
+    const segmentLength = getDistanceMeters({ lng: start[0], lat: start[1] }, { lng: end[0], lat: end[1] });
+    const distanceMeters = getDistanceMeters(position, segment.position);
+
+    if (distanceMeters < best.distanceMeters) {
+      best = {
+        index,
+        position: segment.position,
+        distanceMeters,
+        traveledMeters: traveledBeforeSegment + segmentLength * segment.t,
+      };
+    }
+
+    traveledBeforeSegment += segmentLength;
   }
-  return total;
+
+  if (Number.isFinite(best.distanceMeters)) return best;
+
+  const fallbackCoordinate = routeCoordinates[0] || [];
+  return {
+    index: 0,
+    position: { lng: Number(fallbackCoordinate[0]), lat: Number(fallbackCoordinate[1]) },
+    distanceMeters: Number.POSITIVE_INFINITY,
+    traveledMeters: 0,
+  };
 }
 
-function getCurrentNavigationStep(steps, traveledMeters) {
+function getNearestPointOnSegment(position, startCoordinate, endCoordinate) {
+  const start = { lng: Number(startCoordinate[0]), lat: Number(startCoordinate[1]) };
+  const end = { lng: Number(endCoordinate[0]), lat: Number(endCoordinate[1]) };
+  const referenceLat = toRadians((start.lat + end.lat) / 2);
+  const xScale = Math.cos(referenceLat) || 1;
+  const px = (position.lng - start.lng) * xScale;
+  const py = position.lat - start.lat;
+  const vx = (end.lng - start.lng) * xScale;
+  const vy = end.lat - start.lat;
+  const segmentLengthSquared = vx * vx + vy * vy;
+  const t = segmentLengthSquared ? Math.max(0, Math.min(1, (px * vx + py * vy) / segmentLengthSquared)) : 0;
+
+  return {
+    t,
+    position: {
+      lng: start.lng + (end.lng - start.lng) * t,
+      lat: start.lat + (end.lat - start.lat) * t,
+    },
+  };
+}
+
+function getNavigationStepState(steps, traveledMeters) {
   let cursor = 0;
 
-  for (const step of steps) {
+  for (let index = 0; index < steps.length; index += 1) {
+    const step = steps[index];
     const endMeters = cursor + Number(step.distanceMeters || 0);
-    if (traveledMeters <= endMeters || step.index === steps.length - 1) {
-      return {
+    if (traveledMeters <= endMeters || index === steps.length - 1) {
+      const currentStep = {
         ...step,
         startMeters: cursor,
         endMeters,
+      };
+
+      const nextStep = steps[index + 1];
+      return {
+        currentStep,
+        upcomingStep: nextStep
+          ? {
+              ...nextStep,
+              startMeters: endMeters,
+              endMeters: endMeters + Number(nextStep.distanceMeters || 0),
+            }
+          : null,
       };
     }
     cursor = endMeters;
   }
 
-  return null;
+  return {
+    currentStep: null,
+    upcomingStep: null,
+  };
 }
 
 function getRouteBearingAtIndex(routeItem, routeIndex) {
@@ -2022,6 +2177,27 @@ function getNavigationCameraOffset(map) {
   const height = map?.getContainer?.()?.clientHeight || window.innerHeight || 0;
   const offsetY = Math.round(Math.min(170, Math.max(84, height * 0.2)));
   return [0, offsetY];
+}
+
+function getNavigationScreenDelta(map, position, offset = [0, 0]) {
+  if (!map || !hasCoordinates(position)) return 0;
+
+  try {
+    const point = map.project([position.lng, position.lat]);
+    const container = map.getContainer();
+    const desiredX = (container?.clientWidth || window.innerWidth || 0) / 2 + Number(offset[0] || 0);
+    const desiredY = (container?.clientHeight || window.innerHeight || 0) / 2 + Number(offset[1] || 0);
+    return Math.hypot(point.x - desiredX, point.y - desiredY);
+  } catch {
+    return 0;
+  }
+}
+
+function getNavigationJumpThreshold(map) {
+  const container = map?.getContainer?.();
+  const width = container?.clientWidth || window.innerWidth || 0;
+  const height = container?.clientHeight || window.innerHeight || 0;
+  return Math.max(420, Math.max(width, height) * 0.7);
 }
 
 function normalizeBearing(value) {

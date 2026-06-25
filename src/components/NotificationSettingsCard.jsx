@@ -14,7 +14,7 @@ import {
 } from "../utils/notificationUtils";
 import { APP_NAME } from "../config/appConfig";
 import { refreshHomeNewsFromSheet } from "../services/api";
-import { getVehicle } from "../utils/storage";
+import { getVehicles } from "../utils/storage";
 
 export default function NotificationSettingsCard({ user }) {
   const [preferences, setPreferences] = useState(() => getNotificationPreferences(user));
@@ -85,7 +85,7 @@ export default function NotificationSettingsCard({ user }) {
     try {
       const result = await runVehicleNotificationCheck({
         user,
-        vehicle: getVehicle(user),
+        vehicles: getVehicles(user),
         force: true,
         includeTestWhenEmpty: true,
       });

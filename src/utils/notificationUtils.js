@@ -139,9 +139,10 @@ export function seedHomeNewsNotificationHistory({ user, items = [] } = {}) {
   return { ok: true, seeded };
 }
 
-export async function runVehicleNotificationCheck({ user, vehicle, force = false, includeTestWhenEmpty = false } = {}) {
+export async function runVehicleNotificationCheck({ user, vehicle, vehicles, force = false, includeTestWhenEmpty = false } = {}) {
   const prefs = getNotificationPreferences(user);
   const permission = getNotificationPermission();
+  const vehicleList = normalizeVehiclesInput(vehicles || vehicle);
 
   if (!prefs.enabled) {
     return { ok: false, reason: "disabled", sent: 0 };
@@ -152,7 +153,7 @@ export async function runVehicleNotificationCheck({ user, vehicle, force = false
     return { ok: false, reason: permission, sent: 0 };
   }
 
-  if (!vehicle && !includeTestWhenEmpty) {
+  if (!vehicleList.length && !includeTestWhenEmpty) {
     return { ok: true, skipped: true, reason: "no_vehicle", sent: 0 };
   }
 
@@ -160,7 +161,7 @@ export async function runVehicleNotificationCheck({ user, vehicle, force = false
     return { ok: true, skipped: true, reason: "scheduled_later", sent: 0 };
   }
 
-  const pendingNotifications = await buildVehicleNotifications({ user, vehicle, prefs });
+  const pendingNotifications = await buildVehicleNotifications({ user, vehicles: vehicleList, prefs });
   const sentLog = readSentLog(user);
   let sent = 0;
 
@@ -185,7 +186,7 @@ export async function runVehicleNotificationCheck({ user, vehicle, force = false
     lastCheckedAt: new Date().toISOString(),
   });
 
-  return { ok: true, sent, pending: pendingNotifications.length };
+  return { ok: true, sent, pending: pendingNotifications.length, vehicles: vehicleList.length };
 }
 
 export function shouldRunNotificationCheck(preferences = {}) {
@@ -213,7 +214,15 @@ export function getMsUntilNextReminderTime(timeValue = DEFAULT_DAILY_REMINDER_TI
   return Math.max(1000, target.getTime() - now.getTime());
 }
 
-async function buildVehicleNotifications({ vehicle, prefs }) {
+async function buildVehicleNotifications({ vehicles, prefs }) {
+  const vehicleList = normalizeVehiclesInput(vehicles);
+  if (!vehicleList.length) return [];
+
+  const notificationsByVehicle = await Promise.all(vehicleList.map((vehicle) => buildSingleVehicleNotifications({ vehicle, prefs })));
+  return notificationsByVehicle.flat();
+}
+
+async function buildSingleVehicleNotifications({ vehicle, prefs }) {
   if (!vehicle) return [];
 
   const notifications = [];
@@ -245,6 +254,11 @@ async function buildVehicleNotifications({ vehicle, prefs }) {
   }
 
   return notifications;
+}
+
+function normalizeVehiclesInput(vehicleOrVehicles) {
+  if (Array.isArray(vehicleOrVehicles)) return vehicleOrVehicles.filter(Boolean);
+  return vehicleOrVehicles ? [vehicleOrVehicles] : [];
 }
 
 async function buildPicoPlacaNotification(vehicle, todayKey, vehicleKey) {
