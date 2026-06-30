@@ -3,6 +3,7 @@ const APP_PUBLIC_URL = 'https://copilot360.co/';
 const APP_NAME = 'copilot360';
 const APP_LOGO_URL = APP_PUBLIC_URL + 'copilot360-logo.png';
 const EMAIL_DEFAULT_FROM_NAME = APP_NAME;
+const ALLY_LOGOS_DRIVE_FOLDER_NAME = APP_NAME + ' - Logos Aliados';
 const DEFAULT_AGENT_PASSWORD = 'Copiloto123';
 const FREE_TRIAL_DAYS = 15;
 const PASSWORD_RESET_CODE_TTL_MINUTES = 15;
@@ -198,6 +199,11 @@ function setupCopilotConfig() {
   return { ok: true, message: APP_NAME + ' config ready' };
 }
 
+function authorizeCopilotDriveAccess() {
+  const folder = getOrCreateDriveFolder_(ALLY_LOGOS_DRIVE_FOLDER_NAME);
+  return { ok: true, message: 'Drive autorizado para logos de aliados', folderId: folder.getId() };
+}
+
 function doGet(e) {
   const action = e && e.parameter && e.parameter.action ? e.parameter.action : 'health';
   const callback = e && e.parameter && e.parameter.callback ? e.parameter.callback : '';
@@ -293,14 +299,22 @@ function doPost(e) {
     setupCopilotConfig();
     const result = handleAction_(payload);
     appendApiLog_(payload.action || 'unknown', 'ok', result.message || 'OK', payload);
+    if (payload.responseTransport === 'postMessage') {
+      return postMessageHtml_(payload.requestId || '', result);
+    }
     return json_(result);
   } catch (error) {
     appendApiLog_(payload.action || 'unknown', 'error', error.message, payload);
-    return json_({
+    const result = {
       ok: false,
       error: error.message,
+      message: error.message,
       timestamp: new Date().toISOString(),
-    });
+    };
+    if (payload.responseTransport === 'postMessage') {
+      return postMessageHtml_(payload.requestId || '', result);
+    }
+    return json_(result);
   }
 }
 
@@ -325,6 +339,10 @@ function handleAction_(payload) {
 
   if (action === 'registerAllyPreRegistration') {
     return registerAllyPreRegistration_(payload.preRegistration || {});
+  }
+
+  if (action === 'uploadAllyLogo') {
+    return uploadAllyLogo_(payload.logo || {});
   }
 
   if (action === 'sendNewsPublicationNotifications') {
@@ -881,6 +899,96 @@ function upsertCdaAllyConfig_(user) {
   } else {
     sheet.appendRow(values);
   }
+}
+
+function uploadAllyLogo_(logo) {
+  const fileName = String(logo.fileName || 'logo-aliado.png').trim();
+  const mimeType = String(logo.mimeType || '').trim();
+  const base64Data = String(logo.base64Data || '').replace(/^data:[^,]+,/, '');
+  const codigoAliado = String(logo.codigoAliado || '').trim();
+  const idCDA = String(logo.idCDA || '').trim();
+  const nombreCDA = String(logo.nombreCDA || codigoAliado || 'Aliado').trim();
+
+  if (!base64Data || !mimeType || mimeType.indexOf('image/') !== 0) {
+    throw new Error('Debes subir una imagen valida.');
+  }
+
+  const bytes = Utilities.base64Decode(base64Data);
+  if (bytes.length > 4 * 1024 * 1024) {
+    throw new Error('La imagen no debe superar 4 MB.');
+  }
+
+  const extension = getImageExtension_(mimeType, fileName);
+  const safeCode = sanitizeDriveFileName_(codigoAliado || idCDA || nombreCDA || 'aliado');
+  const timestamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMdd-HHmmss');
+  const finalName = safeCode + '-logo-' + timestamp + extension;
+  const folder = getOrCreateDriveFolder_(ALLY_LOGOS_DRIVE_FOLDER_NAME);
+  const blob = Utilities.newBlob(bytes, mimeType, finalName);
+  const file = folder.createFile(blob);
+  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+
+  const url = buildDriveThumbnailUrl_(file.getId(), 160);
+  updateCdaAllyLogoConfig_({
+    idCDA: idCDA,
+    codigoAliado: codigoAliado,
+    nombreCDA: nombreCDA,
+    logoCdaUrl: url,
+  });
+
+  return {
+    ok: true,
+    message: 'Logo del aliado guardado en Drive',
+    fileId: file.getId(),
+    url: url,
+    logoCdaUrl: url,
+  };
+}
+
+function updateCdaAllyLogoConfig_(ally) {
+  const codigoAliado = String(ally.codigoAliado || '').trim();
+  const idCDA = String(ally.idCDA || '').trim();
+  if (!codigoAliado && !idCDA) return;
+
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sheet = ensureSheet_(ss, SHEETS.cdaAliados.name, SHEETS.cdaAliados.headers);
+  const rows = sheet.getDataRange().getValues();
+  const headers = rows[0].map(function(header) { return String(header || '').trim(); });
+  const codeIndex = headers.indexOf('codigoAliado');
+  const idIndex = headers.indexOf('idCDA');
+  const normalizedCode = normalizeHeader_(codigoAliado);
+  const normalizedId = normalizeHeader_(idCDA);
+  let rowNumber = 0;
+
+  for (let rowIndex = rows.length - 1; rowIndex >= 1; rowIndex -= 1) {
+    const rowCode = codeIndex >= 0 ? normalizeHeader_(rows[rowIndex][codeIndex] || '') : '';
+    const rowId = idIndex >= 0 ? normalizeHeader_(rows[rowIndex][idIndex] || '') : '';
+    if ((normalizedCode && rowCode === normalizedCode) || (normalizedId && rowId === normalizedId)) {
+      rowNumber = rowIndex + 1;
+      break;
+    }
+  }
+
+  if (rowNumber) {
+    setCellByHeader_(sheet, rowNumber, headers, 'logoCdaUrl', ally.logoCdaUrl || '');
+    if (ally.nombreCDA) setCellByHeader_(sheet, rowNumber, headers, 'nombreCDA', ally.nombreCDA);
+    if (codigoAliado) setCellByHeader_(sheet, rowNumber, headers, 'codigoAliado', codigoAliado);
+    if (idCDA) setCellByHeader_(sheet, rowNumber, headers, 'idCDA', idCDA);
+    setCellByHeader_(sheet, rowNumber, headers, 'activo', 'TRUE');
+    return;
+  }
+
+  sheet.appendRow([
+    idCDA,
+    ally.nombreCDA || codigoAliado || idCDA,
+    codigoAliado,
+    '',
+    ally.logoCdaUrl || '',
+    '',
+    '',
+    '',
+    '',
+    'TRUE',
+  ]);
 }
 
 function registerAllyPreRegistration_(preRegistration) {
@@ -3090,8 +3198,9 @@ function normalizeAllyBranding_(branding) {
 }
 
 function buildAllyHeaderHtml_(ally) {
+  const logoUrl = getEmbeddableImageUrl_(ally.logoCdaUrl, 160);
   const logoHtml = ally.logoCdaUrl
-    ? '<img src="' + escapeHtml_(ally.logoCdaUrl) + '" alt="' + escapeHtml_(ally.nombreCDA) + '" style="max-width:130px;max-height:54px;height:auto;display:block;margin:16px auto 0;">'
+    ? '<img src="' + escapeHtml_(logoUrl) + '" alt="' + escapeHtml_(ally.nombreCDA) + '" style="max-width:80px;max-height:40px;height:auto;display:block;margin:12px auto 0;">'
     : '';
 
   return logoHtml + '<p style="color:#d0d5dd;margin:12px 0 0;font-size:13px;font-weight:bold;">' + escapeHtml_(ally.nombreCDA) + ' en alianza con ' + APP_NAME + '</p>';
@@ -3411,6 +3520,48 @@ function escapeHtml_(value) {
     .replace(/'/g, '&#39;');
 }
 
+function getOrCreateDriveFolder_(folderName) {
+  const folders = DriveApp.getFoldersByName(folderName);
+  if (folders.hasNext()) return folders.next();
+  return DriveApp.createFolder(folderName);
+}
+
+function sanitizeDriveFileName_(value) {
+  return String(value || 'archivo')
+    .trim()
+    .replace(/[^\w.-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 80) || 'archivo';
+}
+
+function getImageExtension_(mimeType, fileName) {
+  const normalizedMime = String(mimeType || '').toLowerCase();
+  const cleanFileName = String(fileName || '').toLowerCase();
+  const fileMatch = cleanFileName.match(/\.(png|jpe?g|webp|gif)$/);
+  if (fileMatch) return fileMatch[0].replace('.jpeg', '.jpg');
+  if (normalizedMime === 'image/png') return '.png';
+  if (normalizedMime === 'image/webp') return '.webp';
+  if (normalizedMime === 'image/gif') return '.gif';
+  return '.jpg';
+}
+
+function buildDriveThumbnailUrl_(fileId, size) {
+  return 'https://drive.google.com/thumbnail?id=' + encodeURIComponent(fileId) + '&sz=w' + String(size || 160);
+}
+
+function getEmbeddableImageUrl_(value, size) {
+  const text = String(value || '').trim();
+  if (!text || text.indexOf('drive.google.com') < 0) return text;
+
+  const queryMatch = text.match(/[?&]id=([^&]+)/);
+  const pathMatch = text.match(/\/file\/d\/([^/]+)/);
+  const fileId = queryMatch ? queryMatch[1] : pathMatch ? pathMatch[1] : '';
+  if (!fileId) return text;
+
+  return buildDriveThumbnailUrl_(decodeURIComponent(fileId), size || 160);
+}
+
 function ensureSheet_(ss, sheetName, headers) {
   let sheet = ss.getSheetByName(sheetName);
   if (!sheet) {
@@ -3490,6 +3641,17 @@ function findBuyerByEmail_(email) {
 }
 
 function parsePayload_(e) {
+  if (e && e.parameter && e.parameter.payload) {
+    try {
+      return JSON.parse(e.parameter.payload);
+    } catch (error) {
+      return {
+        action: 'rawPost',
+        raw: e.parameter.payload,
+      };
+    }
+  }
+
   if (!e || !e.postData || !e.postData.contents) {
     return {};
   }
@@ -3661,4 +3823,21 @@ function jsonp_(callback, data) {
   return ContentService
     .createTextOutput(safeCallback + '(' + JSON.stringify(data) + ');')
     .setMimeType(ContentService.MimeType.JAVASCRIPT);
+}
+
+function postMessageHtml_(requestId, data) {
+  const payload = JSON.stringify({
+    source: 'copilot360-apps-script',
+    requestId: requestId || '',
+    data: data || {},
+  }).replace(/</g, '\\u003c');
+
+  return HtmlService.createHtmlOutput(
+    '<!doctype html><html><body><script>' +
+      'var payload=' + payload + ';' +
+      'window.parent.postMessage(payload, "*");' +
+      'if (window.parent && window.parent.parent) window.parent.parent.postMessage(payload, "*");' +
+      'if (window.top && window.top !== window.parent) window.top.postMessage(payload, "*");' +
+    '</script></body></html>'
+  ).setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }

@@ -184,6 +184,66 @@ async function sendToAppsScript(action, data) {
   };
 }
 
+function postFormToAppsScript(action, data = {}, options = {}) {
+  if (!isAppsScriptConfigured()) {
+    return Promise.resolve({
+      ok: false,
+      message: "Google Apps Script no esta configurado.",
+      simulated: true,
+    });
+  }
+
+  const { timeoutMs = 30000 } = options;
+  const requestId = `copilotForm${Date.now()}${Math.random().toString(36).slice(2, 8)}`;
+
+  return new Promise((resolve, reject) => {
+    const iframe = document.createElement("iframe");
+    const form = document.createElement("form");
+    const input = document.createElement("textarea");
+    const timeout = window.setTimeout(() => {
+      cleanup();
+      reject(new Error("No se recibio respuesta del servicio."));
+    }, timeoutMs);
+
+    function cleanup() {
+      window.clearTimeout(timeout);
+      window.removeEventListener("message", onMessage);
+      form.remove();
+      iframe.remove();
+    }
+
+    function onMessage(event) {
+      const message = event.data;
+      if (!message || message.source !== "copilot360-apps-script" || message.requestId !== requestId) return;
+      cleanup();
+      resolve(message.data);
+    }
+
+    window.addEventListener("message", onMessage);
+
+    iframe.name = requestId;
+    iframe.hidden = true;
+    form.hidden = true;
+    form.method = "POST";
+    form.action = APPS_SCRIPT_URL;
+    form.target = requestId;
+    form.enctype = "application/x-www-form-urlencoded";
+    input.name = "payload";
+    input.value = JSON.stringify({
+      action,
+      ...data,
+      responseTransport: "postMessage",
+      requestId,
+      createdAt: new Date().toISOString(),
+    });
+
+    form.appendChild(input);
+    document.body.appendChild(iframe);
+    document.body.appendChild(form);
+    form.submit();
+  });
+}
+
 export async function registerBuyerFromAgent(buyer) {
   return sendToAppsScript("registerBuyerFromAgent", { buyer });
 }
@@ -273,6 +333,10 @@ export async function registerUser(user) {
 
 export async function registerAllyPreRegistration(preRegistration) {
   return sendToAppsScript("registerAllyPreRegistration", { preRegistration });
+}
+
+export async function uploadAllyLogoToDrive(logo) {
+  return postFormToAppsScript("uploadAllyLogo", { logo }, { timeoutMs: 45000 });
 }
 
 export async function getAllyPreRegistrationsFromSheet({ codigoAliado = "", idCDA = "" } = {}) {

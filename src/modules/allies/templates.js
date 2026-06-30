@@ -38,3 +38,22 @@ export function isPublicImageUrl(value = "") {
     return false;
   }
 }
+
+export function getEmbeddableImageUrl(value = "", size = 160) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+
+  try {
+    const url = new URL(text);
+    if (!url.hostname.includes("drive.google.com")) return text;
+
+    const idFromQuery = url.searchParams.get("id");
+    const idFromPath = url.pathname.match(/\/file\/d\/([^/]+)/)?.[1];
+    const fileId = idFromQuery || idFromPath;
+    if (!fileId) return text;
+
+    return `https://drive.google.com/thumbnail?id=${encodeURIComponent(fileId)}&sz=w${Number(size) || 160}`;
+  } catch {
+    return text;
+  }
+}

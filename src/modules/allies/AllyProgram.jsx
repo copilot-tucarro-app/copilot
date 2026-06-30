@@ -13,7 +13,6 @@ import {
   Image,
   KeyRound,
   Link as LinkIcon,
-  Mail,
   MessageCircle,
   PauseCircle,
   Plus,
@@ -38,7 +37,7 @@ import Header from "../../components/Header";
 import StatusBadge from "../../components/StatusBadge";
 import { APP_NAME } from "../../config/appConfig";
 import { cityOptions } from "../../data/mockData";
-import { getAllyPreRegistrationsFromSheet, registerAllyPreRegistration, registerUser, saveVehicleToSheet } from "../../services/api";
+import { getAllyPreRegistrationsFromSheet, registerAllyPreRegistration, registerUser, saveVehicleToSheet, uploadAllyLogoToDrive } from "../../services/api";
 import { createId } from "../../utils/idUtils";
 import {
   buildLiquidationSummary,
@@ -66,7 +65,7 @@ import {
   saveCda,
   updateCdaStatus,
 } from "./storage";
-import { getTemplatePreviewValues, isPublicImageUrl, normalizeAllyTemplates, renderTemplate } from "./templates";
+import { getEmbeddableImageUrl, getTemplatePreviewValues, isPublicImageUrl, normalizeAllyTemplates, renderTemplate } from "./templates";
 import { openActivationWhatsApp, openPendingWhatsApp } from "./whatsapp";
 
 const emptyCda = {
@@ -185,6 +184,33 @@ export default function AllyProgram({ user, onLogout, onNavigate }) {
     void syncCdaAccessRemote(updatedCda, { sendWelcomeEmail: true });
   }
 
+  function handleSaveAllySettings(updates) {
+    if (!selectedCda) return null;
+    const nextSnapshot = saveCda({ ...selectedCda, ...updates });
+    const updatedCda = nextSnapshot.cdas.find((item) => item.idCDA === selectedCda.idCDA) || selectedCda;
+    refresh(nextSnapshot);
+    setNotice("Configuracion del aliado guardada.");
+    void syncCdaAccessRemote(updatedCda);
+    return updatedCda;
+  }
+
+  async function handleUpdateAllyPassword(newPassword) {
+    if (!selectedCda) return { ok: false, message: "Selecciona un aliado para actualizar la contrasena." };
+    const nextSnapshot = saveCda({
+      ...selectedCda,
+      passwordTemporal: newPassword,
+      credencialesActualizadasEn: new Date().toISOString(),
+    });
+    const updatedCda = nextSnapshot.cdas.find((item) => item.idCDA === selectedCda.idCDA) || selectedCda;
+    refresh(nextSnapshot);
+    const remoteResult = await syncCdaAccessRemote(updatedCda);
+    if (remoteResult && remoteResult.ok === false) {
+      return { ok: false, message: remoteResult.message || "No se pudo sincronizar la contrasena remota." };
+    }
+    setNotice(`Contrasena actualizada para ${updatedCda.nombreComercial || updatedCda.nombreCDA}.`);
+    return { ok: true, cda: updatedCda };
+  }
+
   function handleStatusChange(idCDA, estado) {
     refresh(updateCdaStatus(idCDA, estado));
   }
@@ -265,7 +291,7 @@ export default function AllyProgram({ user, onLogout, onNavigate }) {
     { id: "cash", label: "Caja", icon: Banknote },
     canAdmin ? { id: "pending", label: `Pendientes ${pendingCount ? `(${pendingCount})` : ""}`, icon: BellRing } : null,
     { id: "liquidations", label: "Liquidaciones", icon: ReceiptText },
-    { id: "templates", label: "Plantillas", icon: Mail },
+    { id: "settings", label: "Configuracion", icon: KeyRound },
     { id: "script", label: "Instructivo cajero", icon: Clipboard },
   ].filter(Boolean);
 
@@ -370,7 +396,13 @@ export default function AllyProgram({ user, onLogout, onNavigate }) {
 
       {activeTab === "liquidations" && selectedCda ? <Liquidations cda={selectedCda} snapshot={snapshot} onRefresh={refresh} /> : null}
 
-      {activeTab === "templates" && selectedCda ? <TemplateSettings cda={selectedCda} onSave={(updates) => refresh(saveCda({ ...selectedCda, ...updates }))} /> : null}
+      {activeTab === "settings" && selectedCda ? (
+        <AllySettings
+          cda={selectedCda}
+          onSave={handleSaveAllySettings}
+          onPasswordChange={handleUpdateAllyPassword}
+        />
+      ) : null}
 
       {activeTab === "script" ? <CashierScript /> : null}
 
@@ -431,7 +463,7 @@ async function syncActivatedDriverRemote(driver, cda) {
 }
 
 async function syncCdaAccessRemote(cda, options = {}) {
-  if (!cda?.usuarioAcceso || !cda?.passwordTemporal) return;
+  if (!cda?.usuarioAcceso || !cda?.passwordTemporal) return { ok: false, message: "El aliado no tiene usuario o contrasena configurada." };
 
   const user = {
     id: `cda-user-${cda.idCDA}`,
@@ -461,9 +493,11 @@ async function syncCdaAccessRemote(cda, options = {}) {
   };
 
   try {
-    await registerUser(user);
+    const result = await registerUser(user);
+    return result || { ok: true };
   } catch (error) {
     console.warn("No se pudo sincronizar el usuario aliado remoto.", error);
+    return { ok: false, message: "No se pudo sincronizar el usuario aliado remoto." };
   }
 }
 
@@ -1049,11 +1083,15 @@ function Liquidations({ cda, snapshot, onRefresh }) {
   );
 }
 
-function TemplateSettings({ cda, onSave }) {
+function AllySettings({ cda, onSave, onPasswordChange }) {
   const [logoCdaUrl, setLogoCdaUrl] = useState(cda.logoCdaUrl || "");
   const [templates, setTemplates] = useState(() => normalizeAllyTemplates(cda));
   const [selectedTemplateId, setSelectedTemplateId] = useState("documentReminder");
   const [saved, setSaved] = useState(false);
+  const [passwordForm, setPasswordForm] = useState({ newPassword: "", confirmPassword: "" });
+  const [passwordStatus, setPasswordStatus] = useState("");
+  const [logoUploadStatus, setLogoUploadStatus] = useState("");
+  const [logoUploading, setLogoUploading] = useState(false);
   const previewValues = getTemplatePreviewValues(cda);
   const logoIsValid = isPublicImageUrl(logoCdaUrl);
   const selectedTemplate = allyTemplateOptions.find((item) => item.id === selectedTemplateId) || allyTemplateOptions[0];
@@ -1070,31 +1108,106 @@ function TemplateSettings({ cda, onSave }) {
     setSaved(true);
   }
 
+  async function handleLogoFileChange(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    setLogoUploadStatus("");
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setLogoUploadStatus("Selecciona un archivo de imagen.");
+      return;
+    }
+    if (file.size > 4 * 1024 * 1024) {
+      setLogoUploadStatus("La imagen no debe superar 4 MB.");
+      return;
+    }
+
+    try {
+      setLogoUploading(true);
+      const base64Data = await readFileAsBase64(file);
+      const result = await uploadAllyLogoToDrive({
+        idCDA: cda.idCDA,
+        codigoAliado: cda.codigoAliado,
+        nombreCDA: cda.nombreCDA,
+        fileName: file.name,
+        mimeType: file.type,
+        base64Data,
+      });
+      if (!result?.ok || !(result.logoCdaUrl || result.url)) {
+        setLogoUploadStatus(result?.message || result?.error || "No se pudo subir la imagen.");
+        return;
+      }
+      const nextLogoUrl = result.logoCdaUrl || result.url;
+      setLogoCdaUrl(nextLogoUrl);
+      onSave({ logoCdaUrl: nextLogoUrl, emailTemplates: templates });
+      setSaved(true);
+      setLogoUploadStatus("Imagen subida a Drive y guardada.");
+    } catch (error) {
+      setLogoUploadStatus(error.message || "No se pudo subir la imagen.");
+    } finally {
+      setLogoUploading(false);
+    }
+  }
+
+  async function submitPassword(event) {
+    event.preventDefault();
+    const password = passwordForm.newPassword.trim();
+    setPasswordStatus("");
+    if (password.length < 8) {
+      setPasswordStatus("La contrasena debe tener minimo 8 caracteres.");
+      return;
+    }
+    if (password !== passwordForm.confirmPassword.trim()) {
+      setPasswordStatus("Las contrasenas no coinciden.");
+      return;
+    }
+    const result = await onPasswordChange(password);
+    if (!result?.ok) {
+      setPasswordStatus(result?.message || "No se pudo actualizar la contrasena.");
+      return;
+    }
+    setPasswordForm({ newPassword: "", confirmPassword: "" });
+    setPasswordStatus("Contrasena actualizada.");
+  }
+
   return (
     <div className="grid gap-5 lg:grid-cols-[1fr_24rem]">
       <Card className="p-5">
         <div className="mb-5 flex items-start gap-3">
           <div className="grid size-12 shrink-0 place-items-center rounded-2xl bg-blue-50 text-blue-600 ring-1 ring-blue-100">
-            <Mail size={23} />
+            <KeyRound size={23} />
           </div>
           <div>
-            <h2 className="text-2xl font-black text-slate-950">Plantillas de notificación</h2>
-            <p className="mt-1 text-sm leading-6 text-slate-500">El aliado puede cambiar solo el texto. El formato, colores y estructura se mantienen como {APP_NAME}.</p>
+            <h2 className="text-2xl font-black text-slate-950">Configuracion del aliado</h2>
+            <p className="mt-1 text-sm leading-6 text-slate-500">El perfil se mantiene protegido; solo se actualiza la contrasena y la foto/logo del establecimiento.</p>
           </div>
+        </div>
+
+        <div className="mb-4 grid gap-3 md:grid-cols-3">
+          <ReadonlyInfo label="Aliado" value={cda.nombreComercial || cda.nombreCDA} />
+          <ReadonlyInfo label="Codigo" value={cda.codigoAliado} />
+          <ReadonlyInfo label="Usuario" value={cda.usuarioAcceso || cda.correo || "Pendiente"} />
         </div>
 
         <form className="space-y-4" onSubmit={submitForm}>
           <div className="rounded-3xl bg-slate-50 p-4 ring-1 ring-slate-100">
             <div className="mb-3 flex items-center gap-2 text-slate-900">
               <Image size={18} />
-              <p className="font-black">Logo del aliado opcional</p>
+              <p className="font-black">Foto/logo del establecimiento</p>
             </div>
-            <Field label="URL pública HTTPS del logo">
-              <input className="input" value={logoCdaUrl} onChange={(event) => { setLogoCdaUrl(event.target.value); setSaved(false); }} placeholder="https://..." />
+            <Field label="Subir imagen">
+              <input className="input file:mr-4 file:rounded-xl file:border-0 file:bg-slate-950 file:px-4 file:py-2 file:text-sm file:font-black file:text-white" type="file" accept="image/*" onChange={handleLogoFileChange} disabled={logoUploading} />
             </Field>
             <p className={`mt-2 text-xs font-semibold leading-5 ${logoIsValid ? "text-slate-500" : "text-red-600"}`}>
-              Viable si la imagen está en una URL pública HTTPS. En correo no conviene usar archivos locales ni base64; algunos clientes pueden bloquear imágenes externas.
+              Esta imagen se muestra debajo de "Servicio {APP_NAME} Conductores" y encima de "{cda.nombreCDA} en alianza con {APP_NAME}".
             </p>
+            {logoUploading ? <p className="mt-2 text-xs font-black text-blue-700">Subiendo imagen a Drive...</p> : null}
+            {logoUploadStatus ? <p className={`mt-2 text-xs font-black ${logoUploadStatus.includes("subida") ? "text-emerald-700" : "text-red-700"}`}>{logoUploadStatus}</p> : null}
+            {logoCdaUrl && logoIsValid ? (
+              <a className="mt-3 inline-flex text-xs font-black text-blue-700 underline" href={logoCdaUrl} target="_blank" rel="noreferrer">
+                Ver imagen guardada
+              </a>
+            ) : null}
           </div>
 
           <div className="rounded-3xl bg-white p-4 ring-1 ring-slate-200">
@@ -1122,11 +1235,43 @@ function TemplateSettings({ cda, onSave }) {
             <p className="mt-1 font-mono text-xs">{`{nombreCDA} {codigoAliado} {nombreCliente} {documento} {diasRestantes} {placa} {ciudad} {fecha}`}</p>
           </div>
 
-          {saved ? <p className="rounded-2xl bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700">Plantillas guardadas.</p> : null}
+          {saved ? <p className="rounded-2xl bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700">Configuracion guardada.</p> : null}
 
           <button type="submit" className="primary-button w-full" disabled={!logoIsValid}>
             <Save size={18} />
-            Guardar plantillas
+            Guardar configuracion
+          </button>
+        </form>
+
+        <form className="mt-5 space-y-4 rounded-3xl bg-white p-4 ring-1 ring-slate-200" onSubmit={submitPassword}>
+          <div className="flex items-center gap-2 text-slate-900">
+            <KeyRound size={18} />
+            <p className="font-black">Actualizar contrasena</p>
+          </div>
+          <Field label="Nueva contrasena">
+            <input
+              className="input"
+              type="password"
+              value={passwordForm.newPassword}
+              onChange={(event) => setPasswordForm((current) => ({ ...current, newPassword: event.target.value }))}
+              autoComplete="new-password"
+              placeholder="Minimo 8 caracteres"
+            />
+          </Field>
+          <Field label="Confirmar contrasena">
+            <input
+              className="input"
+              type="password"
+              value={passwordForm.confirmPassword}
+              onChange={(event) => setPasswordForm((current) => ({ ...current, confirmPassword: event.target.value }))}
+              autoComplete="new-password"
+              placeholder="Repite la nueva contrasena"
+            />
+          </Field>
+          {passwordStatus ? <p className={`rounded-2xl px-4 py-3 text-sm font-bold ${passwordStatus.includes("actualizada") ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"}`}>{passwordStatus}</p> : null}
+          <button type="submit" className="secondary-button w-full">
+            <KeyRound size={18} />
+            Actualizar contrasena
           </button>
         </form>
       </Card>
@@ -1144,6 +1289,24 @@ function TemplateSettings({ cda, onSave }) {
   );
 }
 
+function ReadonlyInfo({ label, value }) {
+  return (
+    <div className="rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-100">
+      <p className="text-[0.68rem] font-black uppercase tracking-wide text-slate-500">{label}</p>
+      <p className="mt-1 truncate text-sm font-black text-slate-950">{value || "Pendiente"}</p>
+    </div>
+  );
+}
+
+function readFileAsBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || "").split(",")[1] || "");
+    reader.onerror = () => reject(new Error("No se pudo leer el archivo."));
+    reader.readAsDataURL(file);
+  });
+}
+
 function TemplateField({ label, value, helper, onChange }) {
   return (
     <label className="block">
@@ -1156,15 +1319,17 @@ function TemplateField({ label, value, helper, onChange }) {
 
 function EmailPreview({ cda, logoCdaUrl, templates, previewValues, activeTemplate }) {
   const logoIsValid = isPublicImageUrl(logoCdaUrl);
+  const embeddedLogoUrl = getEmbeddableImageUrl(logoCdaUrl, 160);
   const preview = getEmailPreviewMeta(activeTemplate.id, previewValues);
   const message = renderTemplate(templates[activeTemplate.id], previewValues);
 
   return (
     <div className="overflow-hidden rounded-[1.5rem] bg-white shadow-soft ring-1 ring-slate-100">
       <div className="bg-slate-950 px-5 py-6 text-center text-white">
-        {logoCdaUrl && logoIsValid ? <img src={logoCdaUrl} alt="" className="mx-auto mb-4 max-h-16 max-w-[11rem] object-contain" /> : null}
-        <p className="text-xs font-black uppercase tracking-[0.2em] text-blue-200">{cda.nombreCDA}</p>
-        <p className="mt-2 text-sm text-slate-300">En alianza con {APP_NAME}</p>
+        <img src="/copilot360-logo.png" alt={APP_NAME} className="mx-auto max-h-[54px] max-w-[10rem] object-contain" />
+        <p className="mt-3 text-sm font-bold text-slate-300">Servicio {APP_NAME} Conductores</p>
+        {embeddedLogoUrl && logoIsValid ? <img src={embeddedLogoUrl} alt={cda.nombreCDA} className="mx-auto mt-3 max-h-[40px] max-w-[5rem] object-contain" /> : null}
+        <p className="mt-3 text-sm font-bold text-slate-300">{cda.nombreCDA} en alianza con {APP_NAME}</p>
       </div>
       <div className="p-5">
         <div className="mb-4 rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-100">
