@@ -361,6 +361,10 @@ export async function saveVehicleToSheet(vehicle, user) {
   return result;
 }
 
+export async function savePushSubscription(subscription) {
+  return sendToAppsScript("savePushSubscription", { subscription });
+}
+
 export async function logEvent(event) {
   return sendToAppsScript("logEvent", { event });
 }

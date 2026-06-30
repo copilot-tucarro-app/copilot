@@ -66,17 +66,19 @@ self.addEventListener("fetch", (event) => {
 
 self.addEventListener("push", (event) => {
   const payload = readPushPayload(event);
-  const title = payload.title || "copilot360";
+  const notification = payload.notification || {};
+  const data = payload.data || {};
+  const title = payload.title || notification.title || data.title || "copilot360";
   const options = {
-    body: payload.body || "Tienes una alerta pendiente en copilot360.",
-    icon: payload.icon || withVersion("./copilot-icon-192.png"),
-    badge: payload.badge || withVersion("./copilot-icon-192.png"),
-    tag: payload.tag || "copilot-push",
-    renotify: Boolean(payload.renotify),
-    requireInteraction: Boolean(payload.requireInteraction),
+    body: payload.body || notification.body || data.body || "Tienes una alerta pendiente en copilot360.",
+    icon: payload.icon || notification.icon || data.icon || withVersion("./copilot-icon-192.png"),
+    badge: payload.badge || data.badge || withVersion("./copilot-icon-192.png"),
+    tag: payload.tag || data.tag || "copilot-push",
+    renotify: payload.renotify === true || data.renotify === "true",
+    requireInteraction: payload.requireInteraction === true || data.requireInteraction === "true",
     data: {
-      url: payload.url || "./",
-      type: payload.type || "push",
+      url: payload.fcmOptions?.link || payload.url || data.url || "./",
+      type: payload.type || data.type || "push",
     },
   };
 

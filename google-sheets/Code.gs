@@ -159,6 +159,14 @@ const SHEETS = {
     name: 'CorreosNovedades',
     headers: ['timestamp', 'notificationKey', 'userEmail', 'nombre', 'newsId', 'seccion', 'titulo', 'fechaPublicacion', 'status', 'message'],
   },
+  pushSubscriptions: {
+    name: 'PushSubscriptions',
+    headers: ['updatedAt', 'userEmail', 'token', 'permission', 'platform', 'userAgent', 'appVersion', 'status', 'lastError'],
+  },
+  pushMantenimientos: {
+    name: 'PushMantenimientos',
+    headers: ['timestamp', 'notificationKey', 'userEmail', 'nombre', 'vehicleId', 'placa', 'mantenimiento', 'kilometrajeActual', 'kilometrajeObjetivo', 'kilometrosRestantes', 'tipoRecordatorio', 'status', 'message'],
+  },
   novedades: {
     name: 'Novedades',
     headers: ['id', 'seccion', 'titulo', 'descripcion', 'categoria', 'fecha', 'fechaPublicacion', 'imageUrl', 'videoUrl', 'activo'],
@@ -237,6 +245,26 @@ function doGet(e) {
     return callback ? jsonp_(callback, result) : json_(result);
   }
 
+  if (action === 'sendMaintenanceReminders') {
+    const result = sendMaintenanceReminders();
+    return callback ? jsonp_(callback, result) : json_(result);
+  }
+
+  if (action === 'sendDocumentExpiryReminders') {
+    const result = sendDocumentExpiryReminders();
+    return callback ? jsonp_(callback, result) : json_(result);
+  }
+
+  if (action === 'sendPicoPlacaReminders') {
+    const result = sendPicoPlacaReminders();
+    return callback ? jsonp_(callback, result) : json_(result);
+  }
+
+  if (action === 'sendDailyReminderEmails') {
+    const result = sendDailyReminderEmails();
+    return callback ? jsonp_(callback, result) : json_(result);
+  }
+
   if (action === 'installNewsPublicationTrigger') {
     const result = installNewsPublicationTrigger();
     return callback ? jsonp_(callback, result) : json_(result);
@@ -279,6 +307,11 @@ function doGet(e) {
 
   if (action === 'getAllyPreRegistrations') {
     const result = getAllyPreRegistrations_(e.parameter.codigoAliado || '', e.parameter.idCDA || '');
+    return callback ? jsonp_(callback, result) : json_(result);
+  }
+
+  if (action === 'sendTestPushNotification') {
+    const result = sendTestPushNotification_(e.parameter.email || '', e.parameter.token || '');
     return callback ? jsonp_(callback, result) : json_(result);
   }
 
@@ -337,6 +370,10 @@ function handleAction_(payload) {
     return saveVehicle_(payload.vehicle || {}, payload.user || {});
   }
 
+  if (action === 'savePushSubscription') {
+    return savePushSubscription_(payload.subscription || {});
+  }
+
   if (action === 'registerAllyPreRegistration') {
     return registerAllyPreRegistration_(payload.preRegistration || {});
   }
@@ -347,6 +384,26 @@ function handleAction_(payload) {
 
   if (action === 'sendNewsPublicationNotifications') {
     return sendNewsPublicationNotifications();
+  }
+
+  if (action === 'sendMaintenanceReminders') {
+    return sendMaintenanceReminders();
+  }
+
+  if (action === 'sendDocumentExpiryReminders') {
+    return sendDocumentExpiryReminders();
+  }
+
+  if (action === 'sendPicoPlacaReminders') {
+    return sendPicoPlacaReminders();
+  }
+
+  if (action === 'sendDailyReminderEmails') {
+    return sendDailyReminderEmails();
+  }
+
+  if (action === 'sendTestPushNotification') {
+    return sendTestPushNotification_(payload.email || '', payload.token || '');
   }
 
   if (action === 'logEvent') {
@@ -858,6 +915,295 @@ function registerUser_(user) {
   });
 
   return { ok: true, message: existingRecord ? 'User updated' : 'User registered', userId, welcomeEmailSent: welcomeEmail.sent, welcomeEmailMessage: welcomeEmail.message };
+}
+
+function savePushSubscription_(subscription) {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const headers = SHEETS.pushSubscriptions.headers;
+  const sheet = ensureSheet_(ss, SHEETS.pushSubscriptions.name, headers);
+  const token = String(subscription.token || '').trim();
+  const email = String(subscription.userEmail || subscription.email || '').trim().toLowerCase();
+
+  if (!token) {
+    throw new Error('Push token required');
+  }
+
+  const row = [
+    subscription.updatedAt || new Date().toISOString(),
+    email,
+    token,
+    subscription.permission || '',
+    subscription.platform || '',
+    subscription.userAgent || '',
+    subscription.appVersion || '',
+    'active',
+    '',
+  ];
+  const existingRowNumber = findPushSubscriptionRowNumber_(sheet, token);
+
+  if (existingRowNumber) {
+    sheet.getRange(existingRowNumber, 1, 1, row.length).setValues([row]);
+  } else {
+    appendRow_(SHEETS.pushSubscriptions.name, row);
+  }
+
+  return {
+    ok: true,
+    message: 'Push subscription saved',
+    userEmail: email,
+  };
+}
+
+function findPushSubscriptionRowNumber_(sheet, token) {
+  const values = sheet.getDataRange().getValues();
+  if (values.length < 2) return 0;
+
+  const headers = values[0].map(function(header) {
+    return String(header || '').trim();
+  });
+  const tokenIndex = headers.indexOf('token');
+  if (tokenIndex < 0) return 0;
+
+  for (let index = 1; index < values.length; index += 1) {
+    if (String(values[index][tokenIndex] || '').trim() === token) {
+      return index + 1;
+    }
+  }
+
+  return 0;
+}
+
+function sendTestPushNotification_(email, token) {
+  const target = token ? { token: String(token).trim(), userEmail: String(email || '').trim().toLowerCase() } : getLatestPushSubscription_(email);
+
+  if (!target || !target.token) {
+    throw new Error('No hay token push activo para probar.');
+  }
+
+  const result = sendFcmPush_({
+    token: target.token,
+    title: 'Prueba push copilot360',
+    body: 'Tu dispositivo ya puede recibir notificaciones push.',
+    tag: 'copilot-test-push',
+    url: APP_PUBLIC_URL,
+    type: 'test',
+  });
+
+  appendApiLog_('sendTestPushNotification', 'ok', 'Push sent', {
+    userEmail: target.userEmail || '',
+    messageName: result.name || '',
+  });
+
+  return {
+    ok: true,
+    message: 'Push de prueba enviado',
+    userEmail: target.userEmail || '',
+    firebaseResponse: result,
+  };
+}
+
+function getLatestPushSubscription_(email) {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sheet = ensureSheet_(ss, SHEETS.pushSubscriptions.name, SHEETS.pushSubscriptions.headers);
+  const rows = getRowsAsObjects_(sheet);
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+
+  return rows
+    .filter(function(row) {
+      const rowEmail = String(row.userEmail || '').trim().toLowerCase();
+      const status = String(row.status || '').trim().toLowerCase();
+      return row.token && (!normalizedEmail || rowEmail === normalizedEmail) && (!status || status === 'active');
+    })
+    .sort(function(left, right) {
+      return Date.parse(right.updatedAt || '') - Date.parse(left.updatedAt || '');
+    })[0] || null;
+}
+
+function getActivePushSubscriptionsForEmail_(email) {
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  if (!normalizedEmail) return [];
+
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sheet = ensureSheet_(ss, SHEETS.pushSubscriptions.name, SHEETS.pushSubscriptions.headers);
+  const seenTokens = {};
+
+  return getRowsAsObjects_(sheet)
+    .filter(function(row) {
+      const rowEmail = String(row.userEmail || '').trim().toLowerCase();
+      const token = String(row.token || '').trim();
+      const status = String(row.status || '').trim().toLowerCase();
+      if (!token || rowEmail !== normalizedEmail || (status && status !== 'active')) return false;
+      if (seenTokens[token]) return false;
+      seenTokens[token] = true;
+      return true;
+    })
+    .sort(function(left, right) {
+      return Date.parse(right.updatedAt || '') - Date.parse(left.updatedAt || '');
+    });
+}
+
+function safeSendPushToUser_(email, message) {
+  const subscriptions = getActivePushSubscriptionsForEmail_(email);
+  const summary = {
+    attempted: subscriptions.length,
+    sent: 0,
+    errors: 0,
+    messages: [],
+  };
+
+  subscriptions.forEach(function(subscription) {
+    try {
+      const result = sendFcmPush_({
+        token: subscription.token,
+        title: message.title,
+        body: message.body,
+        tag: message.tag,
+        url: message.url,
+        type: message.type,
+        requireInteraction: message.requireInteraction,
+        icon: message.icon,
+        badge: message.badge,
+      });
+
+      summary.sent += 1;
+      summary.messages.push(result.name || 'sent');
+    } catch (error) {
+      summary.errors += 1;
+      summary.messages.push(error.message);
+    }
+  });
+
+  return summary;
+}
+
+function formatPushSummaryForLog_(summary) {
+  if (!summary) return '';
+  return ' | push: ' + summary.sent + '/' + summary.attempted + (summary.errors ? ' errores: ' + summary.errors : '');
+}
+
+function sendFcmPush_(message) {
+  const config = getFirebaseServiceAccountConfig_();
+  const accessToken = getFirebaseAccessToken_(config);
+  const endpoint = 'https://fcm.googleapis.com/v1/projects/' + encodeURIComponent(config.projectId) + '/messages:send';
+  const title = message.title || APP_NAME;
+  const body = message.body || 'Tienes una alerta pendiente en ' + APP_NAME + '.';
+  const icon = message.icon || APP_PUBLIC_URL + 'copilot-icon-192.png';
+  const badge = message.badge || APP_PUBLIC_URL + 'copilot-icon-192.png';
+  const payload = {
+    message: {
+      token: message.token,
+      webpush: {
+        notification: {
+          title,
+          body,
+          icon,
+          badge,
+          tag: message.tag || 'copilot-push',
+          requireInteraction: Boolean(message.requireInteraction),
+          data: {
+            url: message.url || APP_PUBLIC_URL,
+            type: message.type || 'push',
+          },
+        },
+        fcm_options: {
+          link: message.url || APP_PUBLIC_URL,
+        },
+      },
+      data: {
+        title,
+        body,
+        icon,
+        badge,
+        tag: message.tag || 'copilot-push',
+        url: message.url || APP_PUBLIC_URL,
+        type: message.type || 'push',
+        requireInteraction: message.requireInteraction ? 'true' : 'false',
+      },
+    },
+  };
+  const response = UrlFetchApp.fetch(endpoint, {
+    method: 'post',
+    contentType: 'application/json',
+    headers: {
+      Authorization: 'Bearer ' + accessToken,
+    },
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true,
+  });
+  const statusCode = response.getResponseCode();
+  const responseText = response.getContentText();
+  const responsePayload = responseText ? JSON.parse(responseText) : {};
+
+  if (statusCode < 200 || statusCode >= 300) {
+    throw new Error('FCM error ' + statusCode + ': ' + responseText);
+  }
+
+  return responsePayload;
+}
+
+function getFirebaseAccessToken_(config) {
+  const cacheKey = 'firebase_access_token_' + config.projectId;
+  const cached = CacheService.getScriptCache().get(cacheKey);
+  if (cached) return cached;
+
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const header = {
+    alg: 'RS256',
+    typ: 'JWT',
+  };
+  const claimSet = {
+    iss: config.clientEmail,
+    scope: 'https://www.googleapis.com/auth/firebase.messaging',
+    aud: 'https://oauth2.googleapis.com/token',
+    iat: nowSeconds,
+    exp: nowSeconds + 3600,
+  };
+  const unsignedJwt = base64UrlEncode_(JSON.stringify(header)) + '.' + base64UrlEncode_(JSON.stringify(claimSet));
+  const signature = Utilities.computeRsaSha256Signature(unsignedJwt, config.privateKey);
+  const jwt = unsignedJwt + '.' + base64UrlEncodeBytes_(signature);
+  const response = UrlFetchApp.fetch('https://oauth2.googleapis.com/token', {
+    method: 'post',
+    payload: {
+      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+      assertion: jwt,
+    },
+    muteHttpExceptions: true,
+  });
+  const statusCode = response.getResponseCode();
+  const responseText = response.getContentText();
+  const payload = responseText ? JSON.parse(responseText) : {};
+
+  if (statusCode < 200 || statusCode >= 300 || !payload.access_token) {
+    throw new Error('No se pudo autenticar con Firebase: ' + responseText);
+  }
+
+  CacheService.getScriptCache().put(cacheKey, payload.access_token, 3300);
+  return payload.access_token;
+}
+
+function getFirebaseServiceAccountConfig_() {
+  const properties = PropertiesService.getScriptProperties();
+  const projectId = String(properties.getProperty('FIREBASE_PROJECT_ID') || 'copilot360-1577d').trim();
+  const clientEmail = String(properties.getProperty('FIREBASE_CLIENT_EMAIL') || '').trim();
+  const privateKey = String(properties.getProperty('FIREBASE_PRIVATE_KEY') || '').replace(/\\n/g, '\n').trim();
+
+  if (!projectId || !clientEmail || !privateKey) {
+    throw new Error('Configura FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL y FIREBASE_PRIVATE_KEY en Script Properties.');
+  }
+
+  return {
+    projectId,
+    clientEmail,
+    privateKey,
+  };
+}
+
+function base64UrlEncode_(value) {
+  return base64UrlEncodeBytes_(Utilities.newBlob(value).getBytes());
+}
+
+function base64UrlEncodeBytes_(bytes) {
+  return Utilities.base64EncodeWebSafe(bytes).replace(/=+$/g, '');
 }
 
 function upsertCdaAllyConfig_(user) {
@@ -2098,6 +2444,13 @@ function sendNewsPublicationNotifications(options) {
           htmlBody: emailPayload.htmlBody,
           name: EMAIL_DEFAULT_FROM_NAME,
         });
+        const pushSummary = safeSendPushToUser_(email, {
+          title: news.title || 'Nueva novedad en ' + APP_NAME,
+          body: news.description || 'Hay una nueva publicacion disponible en ' + APP_NAME + '.',
+          tag: notificationKey,
+          url: APP_PUBLIC_URL,
+          type: 'news',
+        });
 
         appendNewsPublicationLog_(logSheet, {
           notificationKey,
@@ -2105,7 +2458,7 @@ function sendNewsPublicationNotifications(options) {
           userName,
           news,
           status: 'sent',
-          message: emailPayload.subject,
+          message: emailPayload.subject + formatPushSummaryForLog_(pushSummary),
         });
 
         sentKeys[notificationKey] = true;
@@ -2115,6 +2468,7 @@ function sendNewsPublicationNotifications(options) {
           newsId: news.id,
           title: news.title,
           status: 'sent',
+          push: pushSummary,
         });
       } catch (error) {
         appendNewsPublicationLog_(logSheet, {
@@ -2291,12 +2645,14 @@ function sendDailyReminderEmails() {
   setupCopilotConfig();
 
   const documentSummary = runReminderJob_('sendDocumentExpiryReminders', () => sendDocumentExpiryReminders({ skipSetup: true }));
+  const maintenanceSummary = runReminderJob_('sendMaintenanceReminders', () => sendMaintenanceReminders({ skipSetup: true }));
   const picoPlacaSummary = runReminderJob_('sendPicoPlacaReminders', () => sendPicoPlacaReminders({ skipSetup: true }));
   const newsSummary = runReminderJob_('sendNewsPublicationNotifications', () => sendNewsPublicationNotifications({ skipSetup: true }));
 
   return {
-    ok: Boolean(documentSummary.ok && picoPlacaSummary.ok && newsSummary.ok),
+    ok: Boolean(documentSummary.ok && maintenanceSummary.ok && picoPlacaSummary.ok && newsSummary.ok),
     documentSummary,
+    maintenanceSummary,
     picoPlacaSummary,
     newsSummary,
   };
@@ -2380,6 +2736,14 @@ function sendDocumentExpiryReminders(options) {
           htmlBody: reminder.htmlBody,
           name: EMAIL_DEFAULT_FROM_NAME,
         });
+        const pushSummary = safeSendPushToUser_(email, {
+          title: reminder.subject,
+          body: buildDocumentPushBody_(definition, plate, daysRemaining),
+          tag: notificationKey,
+          url: APP_PUBLIC_URL,
+          type: 'document',
+          requireInteraction: daysRemaining <= 0,
+        });
 
         appendDocumentReminderLog_(logSheet, {
           notificationKey,
@@ -2392,7 +2756,7 @@ function sendDocumentExpiryReminders(options) {
           daysRemaining,
           reminderType,
           status: 'sent',
-          message: reminder.subject,
+          message: reminder.subject + formatPushSummaryForLog_(pushSummary),
         });
 
         sentKeys[notificationKey] = true;
@@ -2403,6 +2767,7 @@ function sendDocumentExpiryReminders(options) {
           document: definition.label,
           daysRemaining,
           status: 'sent',
+          push: pushSummary,
         });
       } catch (error) {
         appendDocumentReminderLog_(logSheet, {
@@ -2425,6 +2790,147 @@ function sendDocumentExpiryReminders(options) {
           plate,
           document: definition.label,
           daysRemaining,
+          status: 'error',
+          message: error.message,
+        });
+      }
+    });
+  });
+
+  return summary;
+}
+
+function sendMaintenanceReminders(options) {
+  if (!options || !options.skipSetup) setupCopilotConfig();
+
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const vehicleSheet = ensureSheet_(ss, SHEETS.vehiculos.name, SHEETS.vehiculos.headers);
+  const logSheet = ensureSheet_(ss, SHEETS.pushMantenimientos.name, SHEETS.pushMantenimientos.headers);
+  const vehicles = getRowsAsObjects_(vehicleSheet);
+  const usersByEmail = buildUsersByEmail_(ss);
+  const sentKeys = getSentReminderKeys_(logSheet);
+  const definitions = [
+    { key: 'aceite_motor', field: 'proximoAceiteMotorKm', label: 'Cambio de aceite motor' },
+    { key: 'aceite_caja', field: 'proximoAceiteCajaKm', label: 'Cambio de aceite de caja' },
+  ];
+  const summary = {
+    ok: true,
+    checkedVehicles: vehicles.length,
+    sent: 0,
+    skipped: 0,
+    errors: 0,
+    details: [],
+  };
+
+  vehicles.forEach((vehicle) => {
+    const email = String(vehicle.userEmail || '').trim().toLowerCase();
+    const plate = String(vehicle.placa || '').trim().toUpperCase();
+    const vehicleId = String(vehicle.vehicleId || '').trim();
+    const currentMileage = normalizeMileage_(vehicle.kilometrajeActual);
+
+    if (!isLikelyEmail_(email) || !Number.isFinite(currentMileage)) {
+      summary.skipped += 1;
+      return;
+    }
+
+    definitions.forEach((definition) => {
+      const targetMileage = normalizeMileage_(vehicle[definition.field]);
+      if (!Number.isFinite(targetMileage) || targetMileage <= 0) return;
+
+      const remainingKm = targetMileage - currentMileage;
+      const reminderType = getMaintenanceReminderType_(remainingKm);
+      if (!reminderType) return;
+
+      const notificationKey = buildMaintenanceReminderKey_(email, vehicleId, plate, definition.key, targetMileage, reminderType);
+      if (sentKeys[notificationKey]) {
+        summary.skipped += 1;
+        return;
+      }
+
+      const user = usersByEmail[email] || {};
+      const userName = user.nombre || user.name || email;
+      const title = reminderType === 'overdue' ? definition.label + ' vencido' : definition.label + ' proximo';
+      const body = buildMaintenancePushBody_(definition.label, plate, remainingKm);
+      const emailPayload = buildMaintenanceReminderEmail_({
+        userName,
+        email,
+        plate,
+        label: definition.label,
+        currentMileage,
+        targetMileage,
+        remainingKm,
+        reminderType,
+      });
+
+      try {
+        sendTransactionalEmail_({
+          to: email,
+          subject: emailPayload.subject,
+          body: emailPayload.plainBody,
+          htmlBody: emailPayload.htmlBody,
+          name: EMAIL_DEFAULT_FROM_NAME,
+        });
+        const pushSummary = safeSendPushToUser_(email, {
+          title,
+          body,
+          tag: notificationKey,
+          url: APP_PUBLIC_URL,
+          type: 'maintenance',
+          requireInteraction: reminderType === 'overdue',
+        });
+
+        appendMaintenanceReminderLog_(logSheet, {
+          notificationKey,
+          email,
+          userName,
+          vehicleId,
+          plate,
+          label: definition.label,
+          currentMileage,
+          targetMileage,
+          remainingKm,
+          reminderType,
+          status: pushSummary.sent > 0 ? 'sent' : 'error',
+          message: emailPayload.subject + formatPushSummaryForLog_(pushSummary),
+        });
+
+        if (pushSummary.sent > 0) {
+          sentKeys[notificationKey] = true;
+          summary.sent += 1;
+        } else {
+          summary.errors += 1;
+        }
+
+        summary.details.push({
+          email,
+          plate,
+          maintenance: definition.label,
+          remainingKm,
+          status: pushSummary.sent > 0 ? 'sent' : 'error',
+          push: pushSummary,
+        });
+      } catch (error) {
+        appendMaintenanceReminderLog_(logSheet, {
+          notificationKey,
+          email,
+          userName,
+          vehicleId,
+          plate,
+          label: definition.label,
+          currentMileage,
+          targetMileage,
+          remainingKm,
+          reminderType,
+          status: 'error',
+          message: error.message,
+        });
+
+        summary.errors += 1;
+        summary.details.push({
+          email,
+          plate,
+          maintenance: definition.label,
+          remainingKm,
           status: 'error',
           message: error.message,
         });
@@ -2510,6 +3016,14 @@ function sendPicoPlacaReminders(options) {
         htmlBody: reminder.htmlBody,
         name: EMAIL_DEFAULT_FROM_NAME,
       });
+      const pushSummary = safeSendPushToUser_(email, {
+        title: reminder.subject,
+        body: buildPicoPlacaPushBody_(plate, city, result),
+        tag: notificationKey,
+        url: APP_PUBLIC_URL,
+        type: 'pico-placa',
+        requireInteraction: true,
+      });
 
       appendPicoPlacaReminderLog_(logSheet, {
         notificationKey,
@@ -2523,7 +3037,7 @@ function sendPicoPlacaReminders(options) {
         digit: result.digit,
         schedule: formatPicoSchedule_(result.rule),
         status: 'sent',
-        message: reminder.subject,
+        message: reminder.subject + formatPushSummaryForLog_(pushSummary),
       });
 
       sentKeys[notificationKey] = true;
@@ -2534,6 +3048,7 @@ function sendPicoPlacaReminders(options) {
         city,
         vehicleType,
         status: 'sent',
+        push: pushSummary,
       });
     } catch (error) {
       appendPicoPlacaReminderLog_(logSheet, {
@@ -2666,6 +3181,24 @@ function appendPicoPlacaReminderLog_(sheet, item) {
   ]);
 }
 
+function appendMaintenanceReminderLog_(sheet, item) {
+  sheet.appendRow([
+    new Date().toISOString(),
+    item.notificationKey || '',
+    item.email || '',
+    item.userName || '',
+    item.vehicleId || '',
+    item.plate || '',
+    item.label || '',
+    item.currentMileage,
+    item.targetMileage,
+    item.remainingKm,
+    item.reminderType || '',
+    item.status || '',
+    item.message || '',
+  ]);
+}
+
 function appendNewsPublicationLog_(sheet, item) {
   const news = item.news || {};
   sheet.appendRow([
@@ -2680,6 +3213,67 @@ function appendNewsPublicationLog_(sheet, item) {
     item.status || '',
     item.message || '',
   ]);
+}
+
+function buildDocumentPushBody_(definition, plate, daysRemaining) {
+  const plateText = plate ? ' de la placa ' + plate : '';
+  if (daysRemaining < 0) {
+    return definition.label + plateText + ' esta vencido desde hace ' + Math.abs(daysRemaining) + ' dias.';
+  }
+  if (daysRemaining === 0) {
+    return definition.label + plateText + ' vence hoy. Revisalo cuanto antes.';
+  }
+  return definition.label + plateText + ' vence en ' + daysRemaining + ' dias.';
+}
+
+function buildPicoPlacaPushBody_(plate, city, result) {
+  const schedule = result && result.rule ? formatPicoSchedule_(result.rule) : '';
+  return 'La placa ' + (plate || 'registrada') + ' tiene restriccion hoy en ' + (city || 'tu ciudad') + (schedule ? '. Horario: ' + schedule : '.') ;
+}
+
+function buildMaintenancePushBody_(label, plate, remainingKm) {
+  const plateText = plate ? ' para la placa ' + plate : '';
+  if (remainingKm <= 0) {
+    return label + plateText + ' ya se paso por ' + Math.abs(remainingKm).toLocaleString('es-CO') + ' km.';
+  }
+  return label + plateText + ': faltan ' + remainingKm.toLocaleString('es-CO') + ' km para el servicio.';
+}
+
+function buildMaintenanceReminderEmail_(context) {
+  const overdue = context.remainingKm <= 0;
+  const subject = overdue
+    ? 'Mantenimiento vencido en ' + APP_NAME + ': ' + context.label
+    : 'Recordatorio de mantenimiento ' + APP_NAME + ': ' + context.label;
+  const remainingText = overdue
+    ? 'ya se paso por ' + Math.abs(context.remainingKm).toLocaleString('es-CO') + ' km'
+    : 'faltan ' + context.remainingKm.toLocaleString('es-CO') + ' km';
+  const plainBody = [
+    'Hola ' + (context.userName || context.email) + ',',
+    '',
+    'Te recordamos que ' + context.label + ' para la placa ' + (context.plate || 'registrada') + ' ' + remainingText + '.',
+    'Kilometraje actual: ' + context.currentMileage.toLocaleString('es-CO') + ' km',
+    'Kilometraje objetivo: ' + context.targetMileage.toLocaleString('es-CO') + ' km',
+    '',
+    'Revisar en ' + APP_NAME + ': ' + APP_PUBLIC_URL,
+  ].join('\n');
+  const htmlBody = [
+    '<div style="font-family:Arial,sans-serif;color:#101828;line-height:1.6">',
+    '<h2 style="margin:0 0 12px;">' + escapeHtml_(subject) + '</h2>',
+    '<p>Hola <strong>' + escapeHtml_(context.userName || context.email) + '</strong>,</p>',
+    '<p>Te recordamos que <strong>' + escapeHtml_(context.label) + '</strong> para la placa <strong>' + escapeHtml_(context.plate || 'registrada') + '</strong> ' + escapeHtml_(remainingText) + '.</p>',
+    '<ul>',
+    '<li>Kilometraje actual: ' + escapeHtml_(context.currentMileage.toLocaleString('es-CO')) + ' km</li>',
+    '<li>Kilometraje objetivo: ' + escapeHtml_(context.targetMileage.toLocaleString('es-CO')) + ' km</li>',
+    '</ul>',
+    '<p><a href="' + escapeHtml_(APP_PUBLIC_URL) + '" style="background:#101828;color:#fff;text-decoration:none;padding:12px 18px;border-radius:10px;display:inline-block;">Revisar en ' + escapeHtml_(APP_NAME) + '</a></p>',
+    '</div>',
+  ].join('');
+
+  return {
+    subject,
+    plainBody,
+    htmlBody,
+  };
 }
 
 function buildNewsPublicationEmail_(context) {
@@ -3232,6 +3826,10 @@ function buildPicoPlacaReminderKey_(email, vehicleId, plate, city, vehicleType, 
   return [email, vehicleId || plate, 'pico_placa', city, vehicleType, dateKey].join('|').toLowerCase();
 }
 
+function buildMaintenanceReminderKey_(email, vehicleId, plate, maintenanceKey, targetMileage, reminderType) {
+  return [email, vehicleId || plate, maintenanceKey, targetMileage, reminderType].join('|').toLowerCase();
+}
+
 function buildNewsPublicationKey_(email, news) {
   const newsId = news && news.id ? news.id : [news && news.title, news && news.date].join('|');
   return [email, 'news', newsId].join('|').toLowerCase();
@@ -3461,6 +4059,18 @@ function getDocumentReminderType_(daysRemaining, noticeDays) {
   return '';
 }
 
+function getMaintenanceReminderType_(remainingKm) {
+  if (!Number.isFinite(remainingKm)) return '';
+  if (remainingKm <= 0) return 'overdue';
+  if (remainingKm <= 500) return 'advance';
+  return '';
+}
+
+function normalizeMileage_(value) {
+  const number = Number(String(value || '').replace(/[^\d.-]/g, ''));
+  return Number.isFinite(number) ? number : NaN;
+}
+
 function normalizeNoticeDays_(value) {
   const days = Number(value);
   if (!Number.isFinite(days) || days < 0) return 30;
@@ -3565,7 +4175,12 @@ function getEmbeddableImageUrl_(value, size) {
 function ensureSheet_(ss, sheetName, headers) {
   let sheet = ss.getSheetByName(sheetName);
   if (!sheet) {
-    sheet = ss.insertSheet(sheetName);
+    try {
+      sheet = ss.insertSheet(sheetName);
+    } catch (error) {
+      sheet = ss.getSheetByName(sheetName);
+      if (!sheet) throw error;
+    }
   }
 
   const lastColumn = Math.max(sheet.getLastColumn(), 1);

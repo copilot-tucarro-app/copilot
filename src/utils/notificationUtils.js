@@ -1,5 +1,7 @@
 import { APP_ICON_URL, APP_NAME } from "../config/appConfig";
 import { checkPicoPlaca } from "../services/picoPlacaService";
+import { savePushSubscription } from "../services/api";
+import { registerFirebaseMessagingToken } from "../services/firebaseMessaging";
 import { buildDocumentAlerts } from "./alertUtils";
 import { todayISO } from "./dateUtils";
 
@@ -74,14 +76,17 @@ export async function enableCopilotNotifications(userOrEmail) {
   }
 
   updateNotificationPreferences(userOrEmail, { enabled: true });
+  const pushRegistration = await registerPushDevice(userOrEmail);
   await showCopilotNotification({
     title: `${APP_NAME} activado`,
-    body: "Te avisaremos sobre Pico y Placa y vencimientos importantes.",
+    body: pushRegistration.ok
+      ? "Te avisaremos aunque la app no este abierta."
+      : "Te avisaremos sobre Pico y Placa y vencimientos importantes.",
     tag: "copilot-notifications-enabled",
     data: { type: "system" },
   });
 
-  return { ok: true, permission };
+  return { ok: true, permission, pushRegistration };
 }
 
 export function disableCopilotNotifications(userOrEmail) {
@@ -319,7 +324,7 @@ async function showCopilotNotification(notification) {
   const options = {
     body: notification.body,
     icon: getIconUrl(),
-    badge: getIconUrl(),
+    badge: getBadgeUrl(),
     tag: notification.tag,
     renotify: false,
     requireInteraction: Boolean(notification.requireInteraction),
@@ -352,6 +357,31 @@ async function showCopilotNotification(notification) {
   }
 }
 
+async function registerPushDevice(userOrEmail) {
+  const registration = await getReadyServiceWorkerRegistration();
+
+  try {
+    const result = await registerFirebaseMessagingToken({ serviceWorkerRegistration: registration || undefined });
+    if (!result.ok) return result;
+
+    const payload = {
+      token: result.token,
+      userEmail: normalizeUserEmail(userOrEmail),
+      permission: getNotificationPermission(),
+      platform: getDevicePlatform(),
+      userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "",
+      appVersion: import.meta.env.VITE_APP_VERSION || "",
+      updatedAt: new Date().toISOString(),
+    };
+
+    await savePushSubscription(payload);
+    return { ok: true, token: result.token };
+  } catch (error) {
+    console.warn("No se pudo registrar el dispositivo para push", error);
+    return { ok: false, reason: "registration_failed", message: error.message };
+  }
+}
+
 async function getReadyServiceWorkerRegistration() {
   if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return null;
 
@@ -372,6 +402,11 @@ async function getReadyServiceWorkerRegistration() {
   } catch {
     return null;
   }
+}
+
+function getDevicePlatform() {
+  if (typeof navigator === "undefined") return "";
+  return navigator.userAgentData?.platform || navigator.platform || "";
 }
 
 function formatPicoSchedule(result) {
@@ -442,6 +477,11 @@ function getTodayKey() {
 function getIconUrl() {
   if (typeof window === "undefined") return APP_ICON_URL;
   return new URL(APP_ICON_URL, window.location.origin).toString();
+}
+
+function getBadgeUrl() {
+  if (typeof window === "undefined") return "/copilot-icon-192.png";
+  return new URL(`${import.meta.env.BASE_URL}copilot-icon-192.png`, window.location.origin).toString();
 }
 
 function getAppUrl() {
