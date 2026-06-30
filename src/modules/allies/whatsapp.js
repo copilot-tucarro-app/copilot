@@ -51,7 +51,7 @@ export function openActivationWhatsApp(client) {
 export function buildPendingActivationMessage({ nombreCliente, codigoActivacion, nombreCDA }) {
   return `Hola ${nombreCliente} 🚗
 
-El ${nombreCDA} en alianza con ${APP_NAME} tiene tu servicio listo para activarse.
+Tu aliado ${nombreCDA} en alianza con ${APP_NAME} tiene tu servicio listo para activarse.
 
 Acércate a caja en ${nombreCDA} y comparte este código:
 ${codigoActivacion}

@@ -41,8 +41,8 @@ export const PAYMENT_METHODS = ["Caja", "Efectivo", "Tarjeta", "Transferencia", 
 export const VEHICLE_TYPES = ["Carro", "Moto", "Camioneta", "Taxi", "Servicio publico"];
 
 export const DEFAULT_ALLY_EMAIL_TEMPLATES = {
-  welcome: `El {nombreCDA} en alianza con ${APP_NAME} te da la bienvenida. Tu servicio ${APP_NAME} Conductores quedo activado por 1 ano.`,
-  documentReminder: `El {nombreCDA} en alianza con ${APP_NAME} te recuerda que tu {documento} se vence en {diasRestantes} dias.`,
-  picoPlaca: `El {nombreCDA} en alianza con ${APP_NAME} te recuerda que hoy tienes pico y placa para la placa {placa}.`,
-  importantAlert: `El {nombreCDA} en alianza con ${APP_NAME} tiene una alerta importante para tu vehiculo {placa}.`,
+  welcome: `Tu aliado {nombreCDA} en alianza con ${APP_NAME} te da la bienvenida. Tu servicio ${APP_NAME} Conductores quedo activado por 1 ano.`,
+  documentReminder: `Tu aliado {nombreCDA} en alianza con ${APP_NAME} te recuerda que tu {documento} se vence en {diasRestantes} dias.`,
+  picoPlaca: `Tu aliado {nombreCDA} en alianza con ${APP_NAME} te recuerda que hoy tienes pico y placa para la placa {placa}.`,
+  importantAlert: `Tu aliado {nombreCDA} en alianza con ${APP_NAME} tiene una alerta importante para tu vehiculo {placa}.`,
 };

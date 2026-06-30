@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import Card from "../../components/Card";
 import { APP_ICON_INVERSE_URL, APP_NAME } from "../../config/appConfig";
 import { cityOptions } from "../../data/mockData";
+import { registerAllyPreRegistration } from "../../services/api";
 import { formatCurrency } from "./calculations";
 import { ALLY_PRICE_ANNUAL, CDA_STATUS } from "./constants";
 import { createPublicPreRegistration, getAllyProgramSnapshot } from "./storage";
@@ -34,7 +35,7 @@ export default function PublicAllyPreRegistration({ refCode }) {
     setForm((current) => ({ ...current, [field]: value }));
   }
 
-  function submitForm(event) {
+  async function submitForm(event) {
     event.preventDefault();
     setStatus(null);
 
@@ -52,6 +53,11 @@ export default function PublicAllyPreRegistration({ refCode }) {
 
     setSnapshot(response.snapshot);
     setResult(response.preRegistration);
+    try {
+      await registerAllyPreRegistration(response.preRegistration);
+    } catch {
+      setStatus({ tone: "success", message: "Pre-registro creado. Si caja no lo ve de inmediato, comparte el codigo de activacion." });
+    }
   }
 
   function copyCode() {
@@ -85,7 +91,7 @@ export default function PublicAllyPreRegistration({ refCode }) {
             <p className="text-sm text-slate-300">Activa tu servicio anual por</p>
             <p className="text-3xl font-black">{formatCurrency(ALLY_PRICE_ANNUAL)}</p>
           </div>
-          <p className="mt-4 text-sm font-bold text-emerald-200">{cda ? `Punto autorizado: ${cda.nombreCDA}` : "Puedes continuar con registro sin aliado."}</p>
+          <p className="mt-4 text-sm font-bold text-emerald-200">{cda ? `Aliado autorizado: ${cda.nombreCDA}` : refCode ? `Aliado: ${refCode}` : "Puedes continuar con registro sin aliado."}</p>
         </div>
       </section>
 

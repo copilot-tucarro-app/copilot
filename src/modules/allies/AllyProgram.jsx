@@ -31,14 +31,14 @@ import {
   WalletCards,
   X,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import BackToCenterButton from "../../components/BackToCenterButton";
 import Card from "../../components/Card";
 import Header from "../../components/Header";
 import StatusBadge from "../../components/StatusBadge";
 import { APP_NAME } from "../../config/appConfig";
 import { cityOptions } from "../../data/mockData";
-import { registerUser, saveVehicleToSheet } from "../../services/api";
+import { getAllyPreRegistrationsFromSheet, registerAllyPreRegistration, registerUser, saveVehicleToSheet } from "../../services/api";
 import { createId } from "../../utils/idUtils";
 import {
   buildLiquidationSummary,
@@ -60,6 +60,7 @@ import {
   buildCdaAccessPassword,
   getAllyProgramSnapshot,
   markLiquidationPaid,
+  mergeRemotePreRegistrations,
   regenerateCdaAccess,
   resetAllyProgramDemoData,
   saveCda,
@@ -124,19 +125,37 @@ const allyTemplateOptions = [
 ];
 
 export default function AllyProgram({ user, onLogout, onNavigate }) {
-  const [snapshot, setSnapshot] = useState(() => getAllyProgramSnapshot());
+  const [snapshot, setSnapshot] = useState(() => getSnapshotForSessionUser(user));
   const [activeTab, setActiveTab] = useState(() => (isAdminUser(user) ? "admin" : "dashboard"));
-  const [selectedCdaId, setSelectedCdaId] = useState(() => user?.idCDA || snapshot.cdas[0]?.idCDA || "");
+  const [selectedCdaId, setSelectedCdaId] = useState(() => user?.idCDA || (isAdminUser(user) ? snapshot.cdas[0]?.idCDA : "") || "");
   const [editingCda, setEditingCda] = useState(null);
   const [paymentTarget, setPaymentTarget] = useState(null);
   const [soundEnabled, setSoundEnabled] = useState(false);
   const [notice, setNotice] = useState("");
   const canAdmin = isAdminUser(user);
-  const availableCdas = canAdmin ? snapshot.cdas : snapshot.cdas.filter((cda) => cda.idCDA === user?.idCDA);
-  const selectedCda = availableCdas.find((cda) => cda.idCDA === selectedCdaId) || availableCdas[0] || snapshot.cdas[0];
+  const availableCdas = canAdmin ? snapshot.cdas : snapshot.cdas.filter((cda) => isAllyOwnedByUser(cda, user));
+  const selectedCda = availableCdas.find((cda) => cda.idCDA === selectedCdaId) || availableCdas[0] || null;
   const globalStats = useMemo(() => calculateGlobalStats(snapshot.cdas, snapshot.preRegistrations, snapshot.sales, snapshot.liquidations), [snapshot]);
   const topCdas = useMemo(() => getTopCdas(snapshot.cdas, snapshot.preRegistrations, snapshot.sales, snapshot.liquidations), [snapshot]);
   const pendingCount = selectedCda ? snapshot.preRegistrations.filter((item) => item.idCDA === selectedCda.idCDA && item.estado === PRE_REGISTRATION_STATUS.pendingPayment).length : 0;
+
+  useEffect(() => {
+    if (!selectedCda?.codigoAliado && !selectedCda?.idCDA) return;
+
+    let cancelled = false;
+    getAllyPreRegistrationsFromSheet({ codigoAliado: selectedCda.codigoAliado, idCDA: selectedCda.idCDA })
+      .then((result) => {
+        if (cancelled || !result?.ok || !Array.isArray(result.items) || !result.items.length) return;
+        refresh(mergeRemotePreRegistrations(result.items));
+      })
+      .catch((error) => {
+        console.warn("No se pudieron cargar los pre-registros remotos.", error);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedCda?.codigoAliado, selectedCda?.idCDA]);
 
   function refresh(nextSnapshot = getAllyProgramSnapshot()) {
     setSnapshot(nextSnapshot);
@@ -149,11 +168,13 @@ export default function AllyProgram({ user, onLogout, onNavigate }) {
   }
 
   function handleSaveCda(cda) {
+    const isNewCda = !snapshot.cdas.some((item) => item.idCDA === cda.idCDA);
     const nextSnapshot = saveCda(cda);
     const savedCda = nextSnapshot.cdas.find((item) => item.idCDA === cda.idCDA) || nextSnapshot.cdas[0];
     refresh(nextSnapshot);
     setEditingCda(null);
-    setNotice(`CDA guardado. Usuario: ${savedCda?.usuarioAcceso || savedCda?.correo || "sin correo"} | Clave: ${savedCda?.passwordTemporal || "pendiente"}`);
+    setNotice(`Aliado guardado. Usuario: ${savedCda?.usuarioAcceso || savedCda?.correo || "sin correo"} | Clave: ${savedCda?.passwordTemporal || "pendiente"}`);
+    void syncCdaAccessRemote(savedCda, { sendWelcomeEmail: isNewCda });
   }
 
   function handleRegenerateAccess(idCDA) {
@@ -161,6 +182,7 @@ export default function AllyProgram({ user, onLogout, onNavigate }) {
     const updatedCda = nextSnapshot.cdas.find((item) => item.idCDA === idCDA);
     refresh(nextSnapshot);
     setNotice(`Credenciales actualizadas. Usuario: ${updatedCda?.usuarioAcceso || updatedCda?.correo || "sin correo"} | Clave: ${updatedCda?.passwordTemporal || "pendiente"}`);
+    void syncCdaAccessRemote(updatedCda, { sendWelcomeEmail: true });
   }
 
   function handleStatusChange(idCDA, estado) {
@@ -168,7 +190,7 @@ export default function AllyProgram({ user, onLogout, onNavigate }) {
   }
 
   function handleDeleteCda(idCDA) {
-    if (!window.confirm("¿Eliminar este CDA aliado?")) return;
+    if (!window.confirm("¿Eliminar este aliado?")) return;
     const nextSnapshot = deleteCda(idCDA);
     refresh(nextSnapshot);
     setSelectedCdaId(nextSnapshot.cdas[0]?.idCDA || "");
@@ -187,6 +209,13 @@ export default function AllyProgram({ user, onLogout, onNavigate }) {
     setNotice(`Membresia activada por 1 ano. Usuario: ${result.driver.usuarioAcceso} | Clave: ${result.driver.passwordTemporal}`);
     const sourceCda = result.snapshot.cdas.find((item) => item.idCDA === result.driver.idCDA) || selectedCda;
     void syncActivatedDriverRemote(result.driver, sourceCda);
+    void registerAllyPreRegistration({
+      ...preRegistration,
+      estado: PRE_REGISTRATION_STATUS.active,
+      fechaActivacion: result.sale?.fechaActivacion || new Date().toISOString(),
+      correo: result.sale?.correo || "",
+      metodoPago: result.sale?.metodoPago || "",
+    });
 
     if (result.sale) {
       openActivationWhatsApp({
@@ -232,7 +261,7 @@ export default function AllyProgram({ user, onLogout, onNavigate }) {
 
   const tabs = [
     canAdmin ? { id: "admin", label: "Admin", icon: ShieldCheck } : null,
-    { id: "dashboard", label: "Dashboard CDA", icon: Store },
+    { id: "dashboard", label: "Dashboard", icon: Store },
     { id: "cash", label: "Caja", icon: Banknote },
     canAdmin ? { id: "pending", label: `Pendientes ${pendingCount ? `(${pendingCount})` : ""}`, icon: BellRing } : null,
     { id: "liquidations", label: "Liquidaciones", icon: ReceiptText },
@@ -286,6 +315,8 @@ export default function AllyProgram({ user, onLogout, onNavigate }) {
       </div>
 
       <CdaSelector cdas={availableCdas} selectedCdaId={selectedCda?.idCDA} onChange={setSelectedCdaId} canAdmin={canAdmin} />
+
+      {!canAdmin && !selectedCda ? <MissingAllyAccess user={user} /> : null}
 
       {activeTab === "admin" && canAdmin ? (
         <AdminPanel
@@ -395,7 +426,44 @@ async function syncActivatedDriverRemote(driver, cda) {
     await registerUser(user);
     await saveVehicleToSheet(vehicle, user);
   } catch (error) {
-    console.warn("No se pudo sincronizar el usuario CDA remoto.", error);
+    console.warn("No se pudo sincronizar el usuario aliado remoto.", error);
+  }
+}
+
+async function syncCdaAccessRemote(cda, options = {}) {
+  if (!cda?.usuarioAcceso || !cda?.passwordTemporal) return;
+
+  const user = {
+    id: `cda-user-${cda.idCDA}`,
+    name: cda.nombreComercial || cda.nombreCDA,
+    email: cda.usuarioAcceso,
+    phone: cda.whatsapp || cda.telefono || "",
+    city: cda.ciudad || "",
+    password: cda.passwordTemporal,
+    role: "cda_aliado",
+    source: "cda-ally-admin",
+    canUseSalesAgent: false,
+    subscriptionStatus: "active",
+    subscriptionEndsAt: "",
+    sendWelcomeEmail: Boolean(options.sendWelcomeEmail),
+    mustChangePassword: false,
+    passwordChangeRequired: false,
+    passwordUpdatedAt: cda.credencialesActualizadasEn || new Date().toISOString(),
+    idCDA: cda.idCDA,
+    codigoAliado: cda.codigoAliado,
+    nombreCDA: cda.nombreCDA,
+    correoCDA: cda.correo || "",
+    logoCdaUrl: cda.logoCdaUrl || "",
+    plantillaBienvenida: cda.emailTemplates?.welcome || "",
+    plantillaVencimiento: cda.emailTemplates?.documentReminder || "",
+    plantillaPicoPlaca: cda.emailTemplates?.picoPlaca || "",
+    plantillaAlerta: cda.emailTemplates?.importantAlert || "",
+  };
+
+  try {
+    await registerUser(user);
+  } catch (error) {
+    console.warn("No se pudo sincronizar el usuario aliado remoto.", error);
   }
 }
 
@@ -405,16 +473,16 @@ function AdminPanel({ snapshot, globalStats, topCdas, onNewCda, onEditCda, onSta
       <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <MetricCard icon={Users} label="Usuarios activos" value={formatNumber(globalStats.usuariosActivos)} />
         <MetricCard icon={BarChart3} label="Tasa de conversión" value={`${globalStats.conversion}%`} />
-        <MetricCard icon={WalletCards} label="Ingresos CDA" value={formatCurrency(globalStats.ingresosCDA)} />
+        <MetricCard icon={WalletCards} label="Ingresos aliados" value={formatCurrency(globalStats.ingresosCDA)} />
         <MetricCard icon={ReceiptText} label={`Ingresos ${APP_NAME}`} value={formatCurrency(globalStats.ingresosCopilot)} />
       </section>
 
       <div className="flex flex-wrap gap-2">
         <button type="button" className="primary-button" onClick={onNewCda}>
           <Plus size={18} />
-          Crear CDA
+          Crear aliado
         </button>
-        <button type="button" className="secondary-button" onClick={() => exportRowsAsCsv("cdas-aliados-copilot360.csv", snapshot.cdas)}>
+        <button type="button" className="secondary-button" onClick={() => exportRowsAsCsv("aliados-copilot360.csv", snapshot.cdas)}>
           <FileSpreadsheet size={18} />
           Exportar CSV
         </button>
@@ -431,7 +499,7 @@ function AdminPanel({ snapshot, globalStats, topCdas, onNewCda, onEditCda, onSta
       <Card className="overflow-hidden">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 p-5">
           <div>
-            <h2 className="text-xl font-black text-slate-950">CDA aliados</h2>
+            <h2 className="text-xl font-black text-slate-950">Aliados</h2>
             <p className="mt-1 text-sm leading-6 text-slate-500">Ranking, estado comercial, saldos y acciones administrativas.</p>
           </div>
           <StatusBadge tone="info">{topCdas.length} aliados</StatusBadge>
@@ -440,7 +508,7 @@ function AdminPanel({ snapshot, globalStats, topCdas, onNewCda, onEditCda, onSta
           <table className="min-w-[1180px] w-full text-left text-sm">
             <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
               <tr>
-                <th className="px-5 py-3">CDA</th>
+                <th className="px-5 py-3">Aliado</th>
                 <th className="px-5 py-3">Estado</th>
                 <th className="px-5 py-3">Código</th>
                 <th className="px-5 py-3">Acceso</th>
@@ -516,7 +584,7 @@ function CdaAccessPanel({ cda, snapshot, soundEnabled, onToggleSound, onCopy, on
       <div className="overflow-hidden rounded-[2rem] bg-slate-950 p-5 text-white shadow-soft">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <p className="text-xs font-black uppercase tracking-[0.2em] text-blue-200">Punto autorizado {APP_NAME}</p>
+            <p className="text-xs font-black uppercase tracking-[0.2em] text-blue-200">Aliado autorizado {APP_NAME}</p>
             <h2 className="mt-2 text-3xl font-black leading-tight">{cda.nombreCDA}</h2>
             <p className="mt-2 font-mono text-sm font-black text-emerald-200">{cda.codigoAliado}</p>
           </div>
@@ -685,7 +753,7 @@ function CashDesk({ cda, snapshot, onPayment, onCancel, onCopy, onManualActivati
       <Card className="p-5">
         <h2 className="text-xl font-black text-slate-950">Registro manual cliente</h2>
         <p className="mt-1 text-sm leading-6 text-slate-500">Activa desde caja cuando el cliente no llegó por QR.</p>
-        {!cdaIsActive ? <p className="mt-3 rounded-2xl bg-red-50 px-4 py-3 text-sm font-bold text-red-700 ring-1 ring-red-100">Este CDA no puede activar membresias mientras no este activo.</p> : null}
+        {!cdaIsActive ? <p className="mt-3 rounded-2xl bg-red-50 px-4 py-3 text-sm font-bold text-red-700 ring-1 ring-red-100">Este aliado no puede activar membresias mientras no este activo.</p> : null}
         <form className="mt-4 space-y-3" onSubmit={submitManual}>
           <Field label="Nombre cliente">
             <input className="input" value={manualForm.nombreCliente} onChange={(event) => updateManual("nombreCliente", event.target.value)} placeholder="Nombre completo" />
@@ -807,7 +875,7 @@ function CdaCreatedUsers({ cda, drivers, onCopy }) {
     <Card className="overflow-hidden">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 p-5">
         <div>
-          <h2 className="text-xl font-black text-slate-950">Usuarios registrados por el CDA</h2>
+          <h2 className="text-xl font-black text-slate-950">Usuarios registrados por el aliado</h2>
           <p className="mt-1 text-sm leading-6 text-slate-500">Activaciones creadas desde caja, QR o registro manual para este aliado.</p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -822,7 +890,7 @@ function CdaCreatedUsers({ cda, drivers, onCopy }) {
       {!drivers.length ? (
         <div className="p-5">
           <div className="rounded-3xl bg-slate-50 p-5 text-center text-sm font-bold text-slate-500 ring-1 ring-slate-100">
-            Aun no hay usuarios activados por este CDA.
+            Aun no hay usuarios activados por este aliado.
           </div>
         </div>
       ) : (
@@ -931,7 +999,7 @@ function Liquidations({ cda, snapshot, onRefresh }) {
         <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <MetricCard icon={Users} label="Usuarios activados" value={formatNumber(summary.usuariosActivados)} />
           <MetricCard icon={Banknote} label="Total recaudado" value={formatCurrency(summary.totalRecaudado)} />
-          <MetricCard icon={WalletCards} label="Comisión CDA" value={formatCurrency(summary.comisionCDA)} />
+          <MetricCard icon={WalletCards} label="Comisión aliado" value={formatCurrency(summary.comisionCDA)} />
           <MetricCard icon={ReceiptText} label={`Valor ${APP_NAME}`} value={formatCurrency(summary.valorCopilot)} />
         </section>
       </section>
@@ -1011,7 +1079,7 @@ function TemplateSettings({ cda, onSave }) {
           </div>
           <div>
             <h2 className="text-2xl font-black text-slate-950">Plantillas de notificación</h2>
-            <p className="mt-1 text-sm leading-6 text-slate-500">El CDA puede cambiar solo el texto. El formato, colores y estructura se mantienen como {APP_NAME}.</p>
+            <p className="mt-1 text-sm leading-6 text-slate-500">El aliado puede cambiar solo el texto. El formato, colores y estructura se mantienen como {APP_NAME}.</p>
           </div>
         </div>
 
@@ -1019,7 +1087,7 @@ function TemplateSettings({ cda, onSave }) {
           <div className="rounded-3xl bg-slate-50 p-4 ring-1 ring-slate-100">
             <div className="mb-3 flex items-center gap-2 text-slate-900">
               <Image size={18} />
-              <p className="font-black">Logo del CDA opcional</p>
+              <p className="font-black">Logo del aliado opcional</p>
             </div>
             <Field label="URL pública HTTPS del logo">
               <input className="input" value={logoCdaUrl} onChange={(event) => { setLogoCdaUrl(event.target.value); setSaved(false); }} placeholder="https://..." />
@@ -1068,7 +1136,7 @@ function TemplateSettings({ cda, onSave }) {
         <Card className="p-5">
           <h3 className="text-xl font-black text-slate-950">Regla de marca</h3>
           <p className="mt-3 text-sm leading-6 text-slate-600">
-            Todas las comunicaciones de usuarios adquiridos por aliado deben iniciar con el CDA en alianza con {APP_NAME} y cerrar con Powered By {APP_NAME}.
+            Todas las comunicaciones de usuarios adquiridos por aliado deben iniciar con el aliado en alianza con {APP_NAME} y cerrar con Powered By {APP_NAME}.
           </p>
         </Card>
       </div>
@@ -1135,7 +1203,7 @@ function getEmailPreviewMeta(templateId, values) {
       badgeValue: "1 año",
       badgeCaption: "membresía activa",
       details: [
-        { label: "CDA", value: values.nombreCDA },
+        { label: "Aliado", value: values.nombreCDA },
         { label: "Código aliado", value: values.codigoAliado },
         { label: "Placa", value: values.placa },
       ],
@@ -1261,16 +1329,16 @@ function CdaModal({ cda, onClose, onSave }) {
         <form onSubmit={submitForm}>
           <div className="sticky top-0 z-10 flex items-center justify-between gap-3 bg-white/95 p-5 backdrop-blur">
             <div>
-              <p className="text-xs font-black uppercase tracking-[0.2em] text-blue-600">CDA aliado</p>
-              <h2 className="text-xl font-black text-slate-950">{form.nombreCDA || "Nuevo CDA"}</h2>
+              <p className="text-xs font-black uppercase tracking-[0.2em] text-blue-600">Aliado</p>
+              <h2 className="text-xl font-black text-slate-950">{form.nombreCDA || "Nuevo aliado"}</h2>
             </div>
             <button type="button" onClick={onClose} className="grid size-10 place-items-center rounded-2xl bg-slate-100 text-slate-500">
               <X size={18} />
             </button>
           </div>
           <div className="grid gap-3 p-5 sm:grid-cols-2">
-            <Field label="idCDA"><input className="input" value={form.idCDA} onChange={(event) => updateField("idCDA", event.target.value)} /></Field>
-            <Field label="Nombre CDA"><input className="input" value={form.nombreCDA} onChange={(event) => updateField("nombreCDA", event.target.value)} /></Field>
+            <Field label="ID aliado"><input className="input" value={form.idCDA} onChange={(event) => updateField("idCDA", event.target.value)} /></Field>
+            <Field label="Nombre aliado"><input className="input" value={form.nombreCDA} onChange={(event) => updateField("nombreCDA", event.target.value)} /></Field>
             <Field label="Nombre comercial"><input className="input" value={form.nombreComercial} onChange={(event) => updateField("nombreComercial", event.target.value)} /></Field>
             <Field label="Ciudad"><select className="input" value={form.ciudad} onChange={(event) => updateField("ciudad", event.target.value)}>{cityOptions.map((city) => <option key={city}>{city}</option>)}</select></Field>
             <Field label="Zona"><input className="input" value={form.zona} onChange={(event) => updateField("zona", event.target.value)} /></Field>
@@ -1286,16 +1354,16 @@ function CdaModal({ cda, onClose, onSave }) {
                 <option value={CDA_STATUS.suspended}>suspendido</option>
               </select>
             </Field>
-            <Field label="Código aliado"><input className="input font-mono uppercase" value={form.codigoAliado} onChange={(event) => updateField("codigoAliado", event.target.value)} placeholder="CDA-LA33" /></Field>
+            <Field label="Código aliado"><input className="input font-mono uppercase" value={form.codigoAliado} onChange={(event) => updateField("codigoAliado", event.target.value)} placeholder="ALIADO-LA33" /></Field>
             <div className="rounded-3xl bg-blue-50 p-4 ring-1 ring-blue-100 sm:col-span-2">
               <div className="mb-3 flex items-center gap-2 text-blue-700">
                 <KeyRound size={18} />
-                <p className="text-sm font-black">Credenciales CDA</p>
+                <p className="text-sm font-black">Credenciales aliado</p>
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
                 <div>
                   <p className="text-xs font-black uppercase tracking-wide text-blue-700/70">Usuario</p>
-                  <p className="mt-1 break-all text-sm font-black text-blue-950">{accessUser || "Usa el correo del CDA"}</p>
+                  <p className="mt-1 break-all text-sm font-black text-blue-950">{accessUser || "Usa el correo del aliado"}</p>
                 </div>
                 <div>
                   <p className="text-xs font-black uppercase tracking-wide text-blue-700/70">Contraseña temporal</p>
@@ -1311,7 +1379,7 @@ function CdaModal({ cda, onClose, onSave }) {
           </div>
           <div className="sticky bottom-0 flex flex-wrap justify-end gap-2 border-t border-slate-100 bg-white/95 p-5 backdrop-blur">
             <button type="button" className="secondary-button" onClick={onClose}>Cancelar</button>
-            <button type="submit" className="primary-button">Guardar CDA</button>
+            <button type="submit" className="primary-button">Guardar aliado</button>
           </div>
         </form>
       </div>
@@ -1389,7 +1457,7 @@ function CdaSelector({ cdas, selectedCdaId, onChange, canAdmin }) {
     return (
       <div className="mb-5 flex flex-wrap items-center gap-3 rounded-3xl bg-white/80 p-3 shadow-sm ring-1 ring-slate-100">
         <Store size={19} className="text-blue-600" />
-        <span className="text-sm font-black text-slate-700">CDA activo</span>
+        <span className="text-sm font-black text-slate-700">Aliado activo</span>
         <span className="rounded-2xl bg-blue-50 px-4 py-3 text-sm font-black text-blue-700 ring-1 ring-blue-100">{cda.nombreCDA}</span>
       </div>
     );
@@ -1398,7 +1466,7 @@ function CdaSelector({ cdas, selectedCdaId, onChange, canAdmin }) {
   return (
     <div className="mb-5 flex flex-wrap items-center gap-3 rounded-3xl bg-white/80 p-3 shadow-sm ring-1 ring-slate-100">
       <Store size={19} className="text-blue-600" />
-      <span className="text-sm font-black text-slate-700">CDA activo</span>
+      <span className="text-sm font-black text-slate-700">Aliado activo</span>
       <select className="input max-w-md" value={selectedCdaId} onChange={(event) => onChange(event.target.value)}>
         {cdas.map((cda) => (
           <option key={cda.idCDA} value={cda.idCDA}>{cda.nombreCDA}</option>
@@ -1426,7 +1494,7 @@ function MetricCard({ icon: Icon, label, value, tone = "info" }) {
 }
 
 function buildCredentialText(cda) {
-  return [`Usuario: ${cda.usuarioAcceso || cda.correo || ""}`, `Contraseña: ${cda.passwordTemporal || ""}`, `CDA: ${cda.nombreCDA || ""}`, `Código aliado: ${cda.codigoAliado || ""}`].join("\n");
+  return [`Usuario: ${cda.usuarioAcceso || cda.correo || ""}`, `Contraseña: ${cda.passwordTemporal || ""}`, `Aliado: ${cda.nombreCDA || ""}`, `Código aliado: ${cda.codigoAliado || ""}`].join("\n");
 }
 
 function buildDriverCredentialText(driver) {
@@ -1435,7 +1503,7 @@ function buildDriverCredentialText(driver) {
     `Usuario: ${driver.usuarioAcceso || driver.correo || driver.whatsappCliente || ""}`,
     `Clave temporal: ${driver.passwordTemporal || ""}`,
     `Placa: ${driver.placa || ""}`,
-    `CDA: ${driver.nombreCDA || ""}`,
+    `Aliado: ${driver.nombreCDA || ""}`,
     `Codigo aliado: ${driver.codigoAliado || ""}`,
   ].join("\n");
 }
@@ -1507,6 +1575,96 @@ function ScriptStep({ number, title, children }) {
 function isAdminUser(user) {
   const role = String(user?.role || "").toLowerCase();
   return role === "owner";
+}
+
+function getSnapshotForSessionUser(user) {
+  const snapshot = getAllyProgramSnapshot();
+  if (isAdminUser(user) || !isAllyProgramSessionUser(user)) return snapshot;
+
+  const hasMatchingAlly = snapshot.cdas.some((cda) => isAllyOwnedByUser(cda, user));
+  if (hasMatchingAlly) return snapshot;
+
+  const sessionAlly = buildAllyFromSessionUser(user);
+  return sessionAlly ? saveCda(sessionAlly) : snapshot;
+}
+
+function isAllyProgramSessionUser(user) {
+  const role = String(user?.role || "").toLowerCase();
+  return role === "cda_aliado" || role === "cda_ally" || Boolean(user?.canUseAllyProgram);
+}
+
+function isAllyOwnedByUser(cda, user) {
+  if (!cda || !user) return false;
+
+  const userId = normalizeComparable(user.idCDA);
+  const userCode = normalizeComparable(user.codigoAliado);
+  const userEmail = normalizeComparable(user.email);
+
+  return Boolean(
+    (userId && normalizeComparable(cda.idCDA) === userId) ||
+      (userCode && normalizeComparable(cda.codigoAliado) === userCode) ||
+      (userEmail && [cda.usuarioAcceso, cda.correo].some((value) => normalizeComparable(value) === userEmail)),
+  );
+}
+
+function buildAllyFromSessionUser(user) {
+  const codigoAliado = String(user?.codigoAliado || "").trim();
+  const email = String(user?.email || "").trim().toLowerCase();
+  const name = String(user?.nombreCDA || user?.name || codigoAliado || "Aliado").trim();
+  const idCDA = String(user?.idCDA || buildSessionAllyId(codigoAliado || email || name)).trim();
+
+  if (!idCDA && !codigoAliado && !email) return null;
+
+  return {
+    idCDA,
+    nombreCDA: name,
+    nombreComercial: name,
+    ciudad: user?.city || "Medellin",
+    zona: "",
+    direccion: "",
+    telefono: user?.phone || "",
+    whatsapp: user?.phone || "",
+    correo: email,
+    usuarioAcceso: email,
+    nombreContacto: name,
+    estado: CDA_STATUS.active,
+    codigoAliado,
+    logoCdaUrl: user?.logoCdaUrl || "",
+    observaciones: "Sincronizado desde usuario aliado.",
+  };
+}
+
+function buildSessionAllyId(value) {
+  const clean = String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .toLowerCase();
+  return `ally-${clean || Date.now().toString().slice(-6)}`;
+}
+
+function normalizeComparable(value = "") {
+  return String(value || "").trim().toLowerCase();
+}
+
+function MissingAllyAccess({ user }) {
+  return (
+    <Card className="p-5">
+      <div className="flex items-start gap-3">
+        <div className="grid size-11 shrink-0 place-items-center rounded-2xl bg-amber-50 text-amber-700 ring-1 ring-amber-100">
+          <AlertTriangle size={21} />
+        </div>
+        <div>
+          <h2 className="text-xl font-black text-slate-950">No encontramos este aliado</h2>
+          <p className="mt-1 text-sm leading-6 text-slate-500">
+            La sesión no coincide con ningún aliado local. Cierra sesión y vuelve a entrar; si continúa, regenera las credenciales del aliado desde el usuario administrador.
+          </p>
+          <p className="mt-3 break-all font-mono text-xs font-bold text-slate-500">{user?.email || user?.codigoAliado || user?.idCDA || "Sin identificador"}</p>
+        </div>
+      </div>
+    </Card>
+  );
 }
 
 function isLikelyEmail(value) {

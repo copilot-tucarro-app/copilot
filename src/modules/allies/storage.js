@@ -201,7 +201,8 @@ export function deleteCda(idCDA) {
 
 export function createPublicPreRegistration({ ref, nombreCliente, whatsapp, placa, ciudad }) {
   const snapshot = getAllyProgramSnapshot();
-  const cda = snapshot.cdas.find((item) => normalizeText(item.codigoAliado) === normalizeText(ref));
+  const referralCode = String(ref || "").trim();
+  const cda = snapshot.cdas.find((item) => normalizeText(item.codigoAliado) === normalizeText(referralCode));
 
   if (cda && cda.estado !== CDA_STATUS.active) {
     return {
@@ -211,12 +212,13 @@ export function createPublicPreRegistration({ ref, nombreCliente, whatsapp, plac
     };
   }
 
-  const codigoAliado = cda?.codigoAliado || "SIN-ALIADO";
+  const codigoAliado = cda?.codigoAliado || (referralCode ? normalizeAllyCode(referralCode) : "SIN-ALIADO");
+  const fallbackAllyName = referralCode ? `Aliado ${codigoAliado}` : "Registro sin aliado";
   const preRegistration = {
     idPreRegistro: createId("pre"),
-    idCDA: cda?.idCDA || "",
+    idCDA: cda?.idCDA || (referralCode ? buildReferralAllyId(codigoAliado) : ""),
     codigoAliado,
-    nombreCDA: cda?.nombreCDA || "Registro sin aliado",
+    nombreCDA: cda?.nombreCDA || fallbackAllyName,
     nombreCliente: String(nombreCliente || "").trim(),
     whatsapp: String(whatsapp || "").trim(),
     placa: String(placa || "").trim().toUpperCase(),
@@ -224,7 +226,7 @@ export function createPublicPreRegistration({ ref, nombreCliente, whatsapp, plac
     fechaHoraPreRegistro: new Date().toISOString(),
     codigoActivacion: buildActivationCode(codigoAliado),
     estado: PRE_REGISTRATION_STATUS.pendingPayment,
-    fuente: cda ? "qr" : "sin_aliado",
+    fuente: referralCode ? "qr" : "sin_aliado",
   };
 
   writeJSON(KEYS.preRegistrations, [preRegistration, ...snapshot.preRegistrations]);
@@ -359,6 +361,33 @@ export function cancelPreRegistration(idPreRegistro) {
     KEYS.preRegistrations,
     snapshot.preRegistrations.map((item) => (item.idPreRegistro === idPreRegistro ? { ...item, estado: PRE_REGISTRATION_STATUS.cancelled } : item)),
   );
+  return getAllyProgramSnapshot();
+}
+
+export function mergeRemotePreRegistrations(remotePreRegistrations = []) {
+  if (!Array.isArray(remotePreRegistrations) || !remotePreRegistrations.length) {
+    return getAllyProgramSnapshot();
+  }
+
+  const snapshot = getAllyProgramSnapshot();
+  const byId = new Map(snapshot.preRegistrations.map((item) => [item.idPreRegistro, item]));
+
+  remotePreRegistrations.forEach((item) => {
+    if (!item?.idPreRegistro) return;
+    const existing = byId.get(item.idPreRegistro);
+    const matchingCda = snapshot.cdas.find((cda) => normalizeText(cda.codigoAliado) === normalizeText(item.codigoAliado));
+    byId.set(item.idPreRegistro, {
+      ...existing,
+      ...item,
+      idCDA: matchingCda?.idCDA || item.idCDA || existing?.idCDA || "",
+      nombreCDA: matchingCda?.nombreCDA || item.nombreCDA || existing?.nombreCDA || "",
+      placa: String(item.placa || existing?.placa || "").trim().toUpperCase(),
+      remoteSynced: true,
+    });
+  });
+
+  const nextPreRegistrations = Array.from(byId.values()).sort((left, right) => new Date(right.fechaHoraPreRegistro || 0).getTime() - new Date(left.fechaHoraPreRegistro || 0).getTime());
+  writeJSON(KEYS.preRegistrations, nextPreRegistrations);
   return getAllyProgramSnapshot();
 }
 
@@ -694,7 +723,18 @@ function normalizeAllyCode(value = "") {
     .replace(/[^a-zA-Z0-9]+/g, "-")
     .replace(/^-|-$/g, "")
     .toUpperCase();
-  return clean.startsWith("CDA-") ? clean : `CDA-${clean || Date.now().toString().slice(-4)}`;
+  if (clean.startsWith("CDA-") || clean.startsWith("ALIADO-")) return clean;
+  return `ALIADO-${clean || Date.now().toString().slice(-4)}`;
+}
+
+function buildReferralAllyId(codigoAliado = "") {
+  const clean = String(codigoAliado || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .toLowerCase();
+  return `ally-${clean || Date.now().toString().slice(-6)}`;
 }
 
 function normalizeText(value = "") {

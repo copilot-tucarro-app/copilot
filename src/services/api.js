@@ -271,6 +271,14 @@ export async function registerUser(user) {
   return sendToAppsScript("registerUser", { user });
 }
 
+export async function registerAllyPreRegistration(preRegistration) {
+  return sendToAppsScript("registerAllyPreRegistration", { preRegistration });
+}
+
+export async function getAllyPreRegistrationsFromSheet({ codigoAliado = "", idCDA = "" } = {}) {
+  return readFromAppsScript("getAllyPreRegistrations", { codigoAliado, idCDA }, { forceRefresh: true, ttlMs: 0 });
+}
+
 export async function updateUserPassword(passwordUpdate) {
   return sendToAppsScript("updateUserPassword", { passwordUpdate });
 }

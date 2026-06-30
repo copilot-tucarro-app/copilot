@@ -1,5 +1,5 @@
 const SPREADSHEET_ID = '1fsDw-bFuLcX_uzIOCyLZ7ZeiiY9KdNDPSXRuT99IxS8';
-const APP_PUBLIC_URL = 'https://copilot-tucarro-app.github.io/copilot/';
+const APP_PUBLIC_URL = 'https://copilot360.co/';
 const APP_NAME = 'copilot360';
 const APP_LOGO_URL = APP_PUBLIC_URL + 'copilot360-logo.png';
 const EMAIL_DEFAULT_FROM_NAME = APP_NAME;
@@ -62,10 +62,10 @@ const DOCUMENT_REMINDER_DEFINITIONS = [
 ];
 
 const DEFAULT_ALLY_EMAIL_TEMPLATES = {
-  welcome: 'El {nombreCDA} en alianza con ' + APP_NAME + ' te da la bienvenida. Tu servicio ' + APP_NAME + ' Conductores quedo activado por 1 ano.',
-  documentReminder: 'El {nombreCDA} en alianza con ' + APP_NAME + ' te recuerda que tu {documento} se vence en {diasRestantes} dias.',
-  picoPlaca: 'El {nombreCDA} en alianza con ' + APP_NAME + ' te recuerda que hoy tienes pico y placa para la placa {placa}.',
-  importantAlert: 'El {nombreCDA} en alianza con ' + APP_NAME + ' tiene una alerta importante para tu vehiculo {placa}.',
+  welcome: 'Tu aliado {nombreCDA} en alianza con ' + APP_NAME + ' te da la bienvenida. Tu servicio ' + APP_NAME + ' Conductores quedo activado por 1 ano.',
+  documentReminder: 'Tu aliado {nombreCDA} en alianza con ' + APP_NAME + ' te recuerda que tu {documento} se vence en {diasRestantes} dias.',
+  picoPlaca: 'Tu aliado {nombreCDA} en alianza con ' + APP_NAME + ' te recuerda que hoy tienes pico y placa para la placa {placa}.',
+  importantAlert: 'Tu aliado {nombreCDA} en alianza con ' + APP_NAME + ' tiene una alerta importante para tu vehiculo {placa}.',
 };
 
 const SHEETS = {
@@ -110,6 +110,10 @@ const SHEETS = {
   cdaAliados: {
     name: 'CDAAliados',
     headers: ['idCDA', 'nombreCDA', 'codigoAliado', 'correo', 'logoCdaUrl', 'plantillaBienvenida', 'plantillaVencimiento', 'plantillaPicoPlaca', 'plantillaAlerta', 'activo'],
+  },
+  preRegistrosAliados: {
+    name: 'PreRegistrosAliados',
+    headers: ['createdAt', 'idPreRegistro', 'idCDA', 'codigoAliado', 'nombreCDA', 'nombreCliente', 'whatsapp', 'placa', 'ciudad', 'codigoActivacion', 'estado', 'fuente', 'fechaActivacion', 'correo', 'metodoPago'],
   },
   vehiculos: {
     name: 'Vehiculos',
@@ -156,7 +160,7 @@ const SHEETS = {
   },
   novedades: {
     name: 'Novedades',
-    headers: ['id', 'seccion', 'titulo', 'descripcion', 'categoria', 'fecha', 'imageUrl', 'videoUrl', 'activo'],
+    headers: ['id', 'seccion', 'titulo', 'descripcion', 'categoria', 'fecha', 'fechaPublicacion', 'imageUrl', 'videoUrl', 'activo'],
   },
   codigoTransito: {
     name: 'CodigoTransito',
@@ -267,6 +271,11 @@ function doGet(e) {
     return callback ? jsonp_(callback, result) : json_(result);
   }
 
+  if (action === 'getAllyPreRegistrations') {
+    const result = getAllyPreRegistrations_(e.parameter.codigoAliado || '', e.parameter.idCDA || '');
+    return callback ? jsonp_(callback, result) : json_(result);
+  }
+
   const result = {
     ok: true,
     app: APP_NAME,
@@ -312,6 +321,10 @@ function handleAction_(payload) {
 
   if (action === 'saveVehicle') {
     return saveVehicle_(payload.vehicle || {}, payload.user || {});
+  }
+
+  if (action === 'registerAllyPreRegistration') {
+    return registerAllyPreRegistration_(payload.preRegistration || {});
   }
 
   if (action === 'sendNewsPublicationNotifications') {
@@ -766,15 +779,17 @@ function parseBooleanProperty_(value, fallback) {
 }
 
 function registerUser_(user) {
-  const createdAt = user.createdAt || new Date().toISOString();
-  const userId = user.id || Utilities.getUuid();
   const email = String(user.email || '').trim().toLowerCase();
+  const sheet = ensureSheet_(SpreadsheetApp.openById(SPREADSHEET_ID), SHEETS.usuarios.name, SHEETS.usuarios.headers);
+  const existingRecord = email ? findUserRecordByEmail_(sheet, email) : null;
+  const existingUser = existingRecord ? existingRecord.user : {};
+  const createdAt = user.createdAt || existingUser.createdAt || new Date().toISOString();
+  const userId = user.id || existingUser.userId || Utilities.getUuid();
   const trial = buildFreeTrialAccess_(createdAt);
   const subscriptionStatus = String(user.subscriptionStatus || '').trim().toLowerCase() === 'active' ? 'active' : trial.subscriptionStatus;
   const subscriptionEndsAt = subscriptionStatus === 'active' ? user.subscriptionEndsAt || '' : '';
   const mustChangePassword = shouldRequirePasswordChange_(user);
-
-  appendRow_(SHEETS.usuarios.name, [
+  const values = [
     createdAt,
     userId,
     user.name || '',
@@ -804,7 +819,19 @@ function registerUser_(user) {
     user.plantillaVencimiento || '',
     user.plantillaPicoPlaca || '',
     user.plantillaAlerta || '',
-  ]);
+  ];
+
+  if (existingRecord) {
+    SHEETS.usuarios.headers.forEach(function(header, index) {
+      setCellByHeader_(sheet, existingRecord.rowNumber, existingRecord.headers, header, values[index]);
+    });
+  } else {
+    sheet.appendRow(values);
+  }
+
+  if (isCdaAllyAccessUser_(user)) {
+    upsertCdaAllyConfig_(user);
+  }
 
   const welcomeEmail = sendCdaActivationWelcomeEmailIfNeeded_(user, {
     email,
@@ -812,7 +839,169 @@ function registerUser_(user) {
     subscriptionEndsAt,
   });
 
-  return { ok: true, message: 'User registered', userId, welcomeEmailSent: welcomeEmail.sent, welcomeEmailMessage: welcomeEmail.message };
+  return { ok: true, message: existingRecord ? 'User updated' : 'User registered', userId, welcomeEmailSent: welcomeEmail.sent, welcomeEmailMessage: welcomeEmail.message };
+}
+
+function upsertCdaAllyConfig_(user) {
+  const codigoAliado = String(user.codigoAliado || '').trim();
+  if (!codigoAliado) return;
+
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sheet = ensureSheet_(ss, SHEETS.cdaAliados.name, SHEETS.cdaAliados.headers);
+  const rows = sheet.getDataRange().getValues();
+  const headers = rows[0].map(function(header) { return String(header || '').trim(); });
+  const codeIndex = headers.indexOf('codigoAliado');
+  const normalizedCode = normalizeHeader_(codigoAliado);
+  let rowNumber = 0;
+
+  for (let rowIndex = rows.length - 1; rowIndex >= 1; rowIndex -= 1) {
+    if (normalizeHeader_(rows[rowIndex][codeIndex] || '') === normalizedCode) {
+      rowNumber = rowIndex + 1;
+      break;
+    }
+  }
+
+  const values = [
+    user.idCDA || '',
+    user.nombreCDA || user.name || codigoAliado,
+    codigoAliado,
+    user.correoCDA || user.email || '',
+    user.logoCdaUrl || '',
+    user.plantillaBienvenida || '',
+    user.plantillaVencimiento || '',
+    user.plantillaPicoPlaca || '',
+    user.plantillaAlerta || '',
+    'TRUE',
+  ];
+
+  if (rowNumber) {
+    SHEETS.cdaAliados.headers.forEach(function(header, index) {
+      setCellByHeader_(sheet, rowNumber, headers, header, values[index]);
+    });
+  } else {
+    sheet.appendRow(values);
+  }
+}
+
+function registerAllyPreRegistration_(preRegistration) {
+  const createdAt = preRegistration.fechaHoraPreRegistro || preRegistration.createdAt || new Date().toISOString();
+  const codigoAliado = normalizeAllyCode_(preRegistration.codigoAliado || preRegistration.ref || '');
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const cdaConfigsByCode = buildCdaConfigsByCode_(ss);
+  const ally = cdaConfigsByCode[normalizeHeader_(codigoAliado)] || {};
+  const idPreRegistro = preRegistration.idPreRegistro || Utilities.getUuid();
+  const codigoActivacion = preRegistration.codigoActivacion || buildAllyActivationCode_(codigoAliado);
+  const sheet = ensureSheet_(ss, SHEETS.preRegistrosAliados.name, SHEETS.preRegistrosAliados.headers);
+  const existing = findAllyPreRegistrationRecord_(sheet, idPreRegistro);
+  const values = [
+    createdAt,
+    idPreRegistro,
+    preRegistration.idCDA || ally.idCDA || buildReferralAllyId_(codigoAliado),
+    codigoAliado,
+    preRegistration.nombreCDA || ally.nombreCDA || ('Aliado ' + codigoAliado),
+    preRegistration.nombreCliente || '',
+    cleanPhone_(preRegistration.whatsapp || ''),
+    String(preRegistration.placa || '').trim().toUpperCase(),
+    preRegistration.ciudad || '',
+    codigoActivacion,
+    preRegistration.estado || 'pendiente_pago',
+    preRegistration.fuente || 'qr',
+    preRegistration.fechaActivacion || '',
+    preRegistration.correo || '',
+    preRegistration.metodoPago || '',
+  ];
+
+  if (existing) {
+    SHEETS.preRegistrosAliados.headers.forEach(function(header, index) {
+      setCellByHeader_(sheet, existing.rowNumber, existing.headers, header, values[index]);
+    });
+  } else {
+    sheet.appendRow(values);
+  }
+
+  return {
+    ok: true,
+    message: existing ? 'Pre-registro actualizado' : 'Pre-registro creado',
+    preRegistration: rowToAllyPreRegistration_(Object.fromEntries(SHEETS.preRegistrosAliados.headers.map(function(header, index) {
+      return [header, values[index]];
+    }))),
+  };
+}
+
+function getAllyPreRegistrations_(codigoAliado, idCDA) {
+  const cleanCode = normalizeHeader_(codigoAliado || '');
+  const cleanId = String(idCDA || '').trim();
+  const sheet = ensureSheet_(SpreadsheetApp.openById(SPREADSHEET_ID), SHEETS.preRegistrosAliados.name, SHEETS.preRegistrosAliados.headers);
+  const items = getRowsAsObjects_(sheet)
+    .filter(function(row) {
+      const rowCode = normalizeHeader_(row.codigoAliado || '');
+      const rowId = String(row.idCDA || '').trim();
+      if (!cleanCode && !cleanId) return true;
+      return (cleanCode && rowCode === cleanCode) || (cleanId && rowId === cleanId);
+    })
+    .map(rowToAllyPreRegistration_);
+
+  return { ok: true, items };
+}
+
+function findAllyPreRegistrationRecord_(sheet, idPreRegistro) {
+  const values = sheet.getDataRange().getValues();
+  if (values.length < 2) return null;
+
+  const headers = values[0].map(function(header) { return String(header || '').trim(); });
+  const idIndex = headers.indexOf('idPreRegistro');
+  if (idIndex < 0) return null;
+
+  for (let rowIndex = values.length - 1; rowIndex >= 1; rowIndex -= 1) {
+    if (String(values[rowIndex][idIndex] || '').trim() === String(idPreRegistro || '').trim()) {
+      const row = {};
+      headers.forEach(function(header, index) {
+        row[header] = values[rowIndex][index];
+      });
+      return { rowNumber: rowIndex + 1, headers, row };
+    }
+  }
+
+  return null;
+}
+
+function rowToAllyPreRegistration_(row) {
+  return {
+    idPreRegistro: String(row.idPreRegistro || '').trim(),
+    idCDA: String(row.idCDA || '').trim(),
+    codigoAliado: String(row.codigoAliado || '').trim(),
+    nombreCDA: String(row.nombreCDA || '').trim(),
+    nombreCliente: String(row.nombreCliente || '').trim(),
+    whatsapp: cleanPhone_(row.whatsapp || ''),
+    placa: String(row.placa || '').trim().toUpperCase(),
+    ciudad: String(row.ciudad || '').trim(),
+    fechaHoraPreRegistro: formatSheetDateTime_(row.createdAt || '') || String(row.createdAt || ''),
+    codigoActivacion: String(row.codigoActivacion || '').trim(),
+    estado: String(row.estado || 'pendiente_pago').trim(),
+    fuente: String(row.fuente || 'qr').trim(),
+    fechaActivacion: formatSheetDateTime_(row.fechaActivacion || '') || String(row.fechaActivacion || ''),
+    correo: String(row.correo || '').trim().toLowerCase(),
+    metodoPago: String(row.metodoPago || '').trim(),
+  };
+}
+
+function normalizeAllyCode_(value) {
+  const clean = String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .toUpperCase();
+  if (clean.indexOf('ALIADO-') === 0 || clean.indexOf('CDA-') === 0) return clean;
+  return 'ALIADO-' + (clean || new Date().getTime().toString().slice(-6));
+}
+
+function buildReferralAllyId_(codigoAliado) {
+  return 'ally-' + normalizeHeader_(codigoAliado || '').toLowerCase();
+}
+
+function buildAllyActivationCode_(codigoAliado) {
+  return normalizeAllyCode_(codigoAliado || 'ALIADO') + '-' + Math.floor(1000 + Math.random() * 9000);
 }
 
 function sendCdaActivationWelcomeEmailIfNeeded_(user, context) {
@@ -860,11 +1049,22 @@ function shouldSendCdaActivationWelcomeEmail_(user, email) {
   return Boolean(user.codigoAliado || user.idCDA || source === 'manual-caja' || source === 'pre-registro' || source === 'cda-caja');
 }
 
+function isCdaAllyAccessUser_(user) {
+  const role = String(user.role || '').trim().toLowerCase();
+  const source = String(user.source || '').trim().toLowerCase();
+  return role === 'cda_aliado' || role === 'cda_ally' || source === 'cda-ally-admin';
+}
+
 function buildCdaActivationWelcomeEmail_(user, context) {
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   const cdaConfigsByCode = buildCdaConfigsByCode_(ss);
   const code = String(user.codigoAliado || '').trim();
   const config = cdaConfigsByCode[normalizeHeader_(code)] || {};
+
+  if (isCdaAllyAccessUser_(user)) {
+    return buildCdaAllyWelcomeEmail_(user, context, config);
+  }
+
   const ally = normalizeAllyBranding_({
     idCDA: user.idCDA || config.idCDA || '',
     codigoAliado: code || config.codigoAliado || '',
@@ -923,6 +1123,140 @@ function buildCdaActivationWelcomeEmail_(user, context) {
   };
 }
 
+function buildCdaAllyWelcomeEmail_(user, context, config) {
+  const code = String(user.codigoAliado || config.codigoAliado || '').trim();
+  const cdaName = String(user.nombreCDA || config.nombreCDA || user.name || APP_NAME).trim();
+  const name = String(user.name || user.nombre || cdaName || context.email).trim();
+  const ally = normalizeAllyBranding_({
+    idCDA: user.idCDA || config.idCDA || '',
+    codigoAliado: code,
+    nombreCDA: cdaName,
+    logoCdaUrl: user.logoCdaUrl || config.logoCdaUrl || '',
+    templates: {},
+  });
+  const values = {
+    nombreUsuario: escapeHtml_(name),
+    allyHeaderHtml: ally ? buildAllyHeaderHtml_(ally) : '',
+    cdaNombre: escapeHtml_(cdaName),
+    codigoAliado: escapeHtml_(code),
+    usuarioAcceso: escapeHtml_(context.email),
+    passwordTemporal: escapeHtml_(user.password || ''),
+    urlApp: escapeHtml_(APP_PUBLIC_URL),
+    footerText: 'Powered By ' + APP_NAME,
+  };
+
+  return {
+    subject: APP_NAME + ': bienvenida al panel de aliados',
+    senderName: APP_NAME,
+    replyTo: getCdaReplyToEmail_(user, config),
+    htmlBody: buildCdaAllyWelcomeHtml_(values),
+    plainBody: buildCdaAllyWelcomePlainBody_({
+      name,
+      cdaName,
+      codigoAliado: code,
+      usuarioAcceso: context.email,
+      passwordTemporal: user.password || '',
+      urlApp: APP_PUBLIC_URL,
+    }),
+  };
+}
+
+function buildCdaAllyWelcomePlainBody_(values) {
+  return [
+    'Hola ' + values.name + ',',
+    '',
+    'Bienvenido al programa de aliados de ' + APP_NAME + '. Tu acceso al panel del aliado quedo activo.',
+    '',
+    'Aliado: ' + values.cdaName,
+    'Codigo aliado: ' + values.codigoAliado,
+    'Usuario/correo de acceso: ' + values.usuarioAcceso,
+    'Clave/contrasena temporal: ' + values.passwordTemporal,
+    '',
+    'Ingresa aqui: ' + values.urlApp,
+    '',
+    'Powered By ' + APP_NAME + '.',
+  ].filter(function(line) {
+    return line !== '';
+  }).join('\n');
+}
+
+function buildCdaAllyWelcomeHtml_(values) {
+  const template = `<!DOCTYPE html>
+<html lang="es">
+<body style="margin:0;padding:0;background:#f5f7fb;font-family:Arial,sans-serif;color:#1f2937;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="padding:24px 0;background:#f5f7fb;">
+    <tr>
+      <td align="center">
+        <table width="100%" cellpadding="0" cellspacing="0" style="max-width:620px;background:#ffffff;border-radius:18px;overflow:hidden;box-shadow:0 10px 28px rgba(15,23,42,.10);">
+          <tr>
+            <td align="center" style="padding:26px 20px 14px;background:#101828;">
+              <img src="${APP_LOGO_URL}"
+                   alt="${APP_NAME}"
+                   style="max-width:160px;height:auto;display:block;margin:auto;">
+              <p style="color:#d0d5dd;margin:14px 0 0;font-size:14px;">
+                Panel de aliados ${APP_NAME}
+              </p>
+              {{allyHeaderHtml}}
+            </td>
+          </tr>
+
+          <tr>
+            <td style="padding:30px 26px;">
+              <p style="font-size:17px;margin:0 0 16px;">
+                Hola <strong>{{nombreUsuario}}</strong>,
+              </p>
+
+              <p style="font-size:16px;line-height:1.6;margin:0 0 18px;">
+                Bienvenido al programa de aliados de ${APP_NAME}. Ya puedes ingresar al panel para gestionar tus activaciones, clientes y herramientas comerciales.
+              </p>
+
+              <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:16px;padding:18px;text-align:center;margin:0 0 22px;">
+                <p style="margin:0;color:#1d4ed8;font-size:13px;font-weight:bold;text-transform:uppercase;letter-spacing:.06em;">
+                  Acceso aliado activo
+                </p>
+                <p style="margin:8px 0 0;color:#1e3a8a;font-size:22px;font-weight:800;">
+                  {{cdaNombre}}
+                </p>
+              </div>
+
+              <table width="100%" cellpadding="0" cellspacing="0" style="background:#f9fafb;border-radius:14px;margin:0 0 22px;">
+                <tr>
+                  <td style="padding:16px;font-size:15px;line-height:1.8;">
+                    <strong>C&oacute;digo aliado:</strong> {{codigoAliado}}<br>
+                    <strong>Usuario/correo:</strong> {{usuarioAcceso}}<br>
+                    <strong>Clave/contrase&ntilde;a temporal:</strong> {{passwordTemporal}}
+                  </td>
+                </tr>
+              </table>
+
+              <p style="font-size:15px;line-height:1.6;color:#475467;margin:0 0 22px;">
+                Guarda estas credenciales y comparte el acceso solo con el equipo autorizado del aliado.
+              </p>
+
+              <div style="text-align:center;margin:28px 0;">
+                <a href="{{urlApp}}"
+                   style="background:#101828;color:#ffffff;text-decoration:none;padding:14px 24px;border-radius:12px;font-size:16px;font-weight:bold;display:inline-block;">
+                  Entrar al panel
+                </a>
+              </div>
+            </td>
+          </tr>
+
+          <tr>
+            <td style="background:#101828;padding:18px 24px;text-align:center;font-size:12px;color:#d0d5dd;">
+              {{footerText}}
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+
+  return fillTemplate_(template, values);
+}
+
 function getCdaReplyToEmail_(user, config) {
   const candidate = String(user.correoCDA || config.correo || '').trim().toLowerCase();
   return isLikelyEmail_(candidate) ? candidate : '';
@@ -935,8 +1269,8 @@ function buildCdaActivationWelcomePlainBody_(values) {
     values.welcomeMessage,
     '',
     'Tu servicio ' + APP_NAME + ' Conductores quedo activado por 1 ano.',
-    'CDA aliado: ' + values.cdaName,
-    'Codigo CDA: ' + values.codigoAliado,
+    'Aliado: ' + values.cdaName,
+    'Codigo aliado: ' + values.codigoAliado,
     'Usuario: ' + values.usuarioAcceso,
     'Clave temporal: ' + values.passwordTemporal,
     values.fechaVencimiento ? 'Vigente hasta: ' + values.fechaVencimiento : '',
@@ -994,8 +1328,8 @@ function buildCdaActivationWelcomeHtml_(values) {
               <table width="100%" cellpadding="0" cellspacing="0" style="background:#f9fafb;border-radius:14px;margin:0 0 22px;">
                 <tr>
                   <td style="padding:16px;font-size:15px;line-height:1.8;">
-                    <strong>CDA aliado:</strong> {{cdaNombre}}<br>
-                    <strong>C&oacute;digo CDA:</strong> {{codigoAliado}}<br>
+                    <strong>Aliado:</strong> {{cdaNombre}}<br>
+                    <strong>C&oacute;digo aliado:</strong> {{codigoAliado}}<br>
                     <strong>Usuario:</strong> {{usuarioAcceso}}<br>
                     <strong>Clave temporal:</strong> {{passwordTemporal}}<br>
                     <strong>Vigente hasta:</strong> {{fechaVencimiento}}
@@ -1528,19 +1862,46 @@ function getHomeNews_() {
   const sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName(SHEETS.novedades.name);
   const items = getRowsAsObjects_(sheet)
     .filter((row) => isActive_(row.activo))
-    .map((row, index) => ({
-      id: row.id || 'news-' + index,
-      section: row.seccion || 'Novedades de transito',
-      title: row.titulo || '',
-      description: row.descripcion || '',
-      category: row.categoria || 'General',
-      date: formatSheetDate_(row.fecha) || '',
-      imageUrl: row.imageUrl || '',
-      videoUrl: row.videoUrl || '',
-    }))
+    .map((row, index) => {
+      const publishedAt = getNewsPublishedAt_(row);
+      return {
+        id: row.id || 'news-' + index,
+        section: row.seccion || 'Novedades de transito',
+        title: row.titulo || '',
+        description: row.descripcion || '',
+        category: row.categoria || 'General',
+        date: formatSheetDate_(row.fecha) || formatSheetDate_(publishedAt) || '',
+        publishedAt,
+        imageUrl: row.imageUrl || '',
+        videoUrl: row.videoUrl || '',
+      };
+    })
     .filter((item) => item.title);
 
   return { ok: true, items };
+}
+
+function getNewsPublishedAt_(row) {
+  const explicitPublishedAt = getValue_(row, ['fechaPublicacion', 'publishedAt', 'createdAt', 'publicadoEn']);
+  if (explicitPublishedAt) return formatSheetDateTime_(explicitPublishedAt);
+  return formatSheetDate_(row.fecha) || '';
+}
+
+function isNewsEligibleForUser_(news, user) {
+  const userCreatedAt = parseSheetDateTime_(user.createdAt);
+  const userCreatedDate = parseSheetDateOnly_(user.createdAt);
+  if (!userCreatedAt && !userCreatedDate) return false;
+
+  const newsPublishedAt = parseSheetDateTime_(news.publishedAt);
+  if (newsPublishedAt) {
+    const baseline = userCreatedAt || userCreatedDate;
+    return newsPublishedAt.getTime() >= baseline.getTime();
+  }
+
+  const newsDate = parseSheetDateOnly_(news.date || news.publishedAt);
+  if (!newsDate || !userCreatedDate) return false;
+
+  return daysBetweenDateOnly_(userCreatedDate, newsDate) >= 0;
 }
 
 function installNewsPublicationTrigger() {
@@ -1604,6 +1965,11 @@ function sendNewsPublicationNotifications(options) {
       const email = String(user.correo || '').trim().toLowerCase();
       const userName = user.nombre || email;
       const notificationKey = buildNewsPublicationKey_(email, news);
+
+      if (!isNewsEligibleForUser_(news, user)) {
+        summary.skipped += 1;
+        return;
+      }
 
       if (sentKeys[notificationKey]) {
         summary.skipped += 1;
@@ -3005,6 +3371,20 @@ function parseSheetDateOnly_(value) {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateText);
   if (!match) return null;
   return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+}
+
+function parseSheetDateTime_(value) {
+  if (!value) return null;
+  if (Object.prototype.toString.call(value) === '[object Date]') {
+    return isNaN(value.getTime()) ? null : value;
+  }
+
+  const text = String(value).trim();
+  if (!/[tT\s]\d{1,2}:\d{2}/.test(text)) return null;
+
+  const normalizedText = text.indexOf(' ') >= 0 && text.indexOf('T') < 0 ? text.replace(' ', 'T') : text;
+  const parsedDate = new Date(normalizedText);
+  return isNaN(parsedDate.getTime()) ? null : parsedDate;
 }
 
 function daysBetweenDateOnly_(fromDate, toDate) {

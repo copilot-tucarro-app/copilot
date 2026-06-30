@@ -16,8 +16,8 @@ export function renderTemplate(template, values = {}) {
 
 export function getTemplatePreviewValues(cda = {}) {
   return {
-    nombreCDA: cda.nombreCDA || "CDA aliado",
-    codigoAliado: cda.codigoAliado || "CDA-DEMO",
+    nombreCDA: cda.nombreCDA || "Aliado",
+    codigoAliado: cda.codigoAliado || "ALIADO-DEMO",
     nombreCliente: "Laura",
     documento: "SOAT",
     diasRestantes: "12",
