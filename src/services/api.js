@@ -366,7 +366,11 @@ export async function sendNotificationContactsTestEmail(vehicle, user) {
 }
 
 export async function savePushSubscription(subscription) {
-  return sendToAppsScript("savePushSubscription", { subscription });
+  return postFormToAppsScript("savePushSubscription", { subscription }, { timeoutMs: 30000 });
+}
+
+export async function sendTestPushNotification({ email = "", token = "" } = {}) {
+  return postFormToAppsScript("sendTestPushNotification", { email: normalizeEmail(email), token }, { timeoutMs: 30000 });
 }
 
 export async function logEvent(event) {

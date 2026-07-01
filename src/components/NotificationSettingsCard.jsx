@@ -9,6 +9,7 @@ import {
   getNotificationPreferences,
   runVehicleNotificationCheck,
   seedHomeNewsNotificationHistory,
+  sendRemoteTestNotification,
   sendTestNotification,
   updateNotificationPreferences,
 } from "../utils/notificationUtils";
@@ -83,6 +84,12 @@ export default function NotificationSettingsCard({ user }) {
     setBusy("test");
 
     try {
+      const remoteResult = await sendRemoteTestNotification(user);
+      if (remoteResult.ok) {
+        setStatus("Enviamos una prueba push remota a este dispositivo.");
+        return;
+      }
+
       const result = await runVehicleNotificationCheck({
         user,
         vehicles: getVehicles(user),
@@ -96,7 +103,7 @@ export default function NotificationSettingsCard({ user }) {
       }
 
       const fallbackShown = await sendTestNotification();
-      setStatus(fallbackShown ? "Enviamos una notificacion de prueba." : "No pudimos mostrar la notificacion.");
+      setStatus(fallbackShown ? `Mostramos una prueba local. Push remoto: ${remoteResult.message || remoteResult.reason || "no disponible"}.` : "No pudimos mostrar la notificacion.");
     } finally {
       setBusy("");
     }

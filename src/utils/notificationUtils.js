@@ -1,7 +1,7 @@
 import { APP_ICON_URL, APP_NAME } from "../config/appConfig";
 import { checkPicoPlaca } from "../services/picoPlacaService";
-import { savePushSubscription } from "../services/api";
-import { registerFirebaseMessagingToken } from "../services/firebaseMessaging";
+import { savePushSubscription, sendTestPushNotification } from "../services/api";
+import { listenForForegroundMessages, registerFirebaseMessagingToken } from "../services/firebaseMessaging";
 import { buildDocumentAlerts } from "./alertUtils";
 import { todayISO } from "./dateUtils";
 
@@ -16,6 +16,9 @@ const DEFAULT_NOTIFICATION_PREFERENCES = {
   dailyReminderTime: DEFAULT_DAILY_REMINDER_TIME,
   lastCheckDate: "",
 };
+const DEFAULT_PUSH_BODY = `Tienes una alerta pendiente en ${APP_NAME}.`;
+let foregroundPushUserKey = "";
+let foregroundPushUnsubscribePromise = null;
 
 export function getNotificationCapability() {
   const supported = typeof window !== "undefined" && "Notification" in window;
@@ -99,6 +102,53 @@ export async function sendTestNotification() {
     body: `${APP_NAME} puede mostrar alertas en este dispositivo.`,
     tag: `copilot-test-${Date.now()}`,
     data: { type: "test" },
+  });
+}
+
+export async function sendRemoteTestNotification(userOrEmail) {
+  const pushRegistration = await registerPushDevice(userOrEmail);
+  if (!pushRegistration.ok) return pushRegistration;
+
+  const result = await sendTestPushNotification({
+    email: normalizeUserEmail(userOrEmail),
+    token: pushRegistration.token,
+  });
+
+  if (!result?.ok) {
+    return {
+      ok: false,
+      reason: "remote_test_failed",
+      message: result?.message || result?.error || "No se pudo enviar la prueba push remota.",
+    };
+  }
+
+  return {
+    ok: true,
+    pushRegistration,
+    firebaseResponse: result.firebaseResponse,
+    message: result.message || "Push remoto enviado.",
+  };
+}
+
+export function startForegroundPushNotifications(userOrEmail) {
+  const userKey = normalizeUserEmail(userOrEmail);
+  if (!userKey || foregroundPushUserKey === userKey) return;
+
+  if (foregroundPushUnsubscribePromise) {
+    foregroundPushUnsubscribePromise.then((unsubscribe) => unsubscribe?.()).catch(() => undefined);
+  }
+
+  foregroundPushUserKey = userKey;
+  foregroundPushUnsubscribePromise = listenForForegroundMessages(async (payload) => {
+    const prefs = getNotificationPreferences(userKey);
+    if (!prefs.enabled || getNotificationPermission() !== "granted") return;
+
+    const notification = buildFirebaseForegroundNotification(payload);
+    if (notification) await showCopilotNotification(notification);
+  }).catch((error) => {
+    console.warn("No se pudo escuchar mensajes push en primer plano", error);
+    foregroundPushUserKey = "";
+    return null;
   });
 }
 
@@ -374,12 +424,37 @@ async function registerPushDevice(userOrEmail) {
       updatedAt: new Date().toISOString(),
     };
 
-    await savePushSubscription(payload);
-    return { ok: true, token: result.token };
+    const saveResult = await savePushSubscription(payload);
+    if (!saveResult?.ok) {
+      return {
+        ok: false,
+        reason: "subscription_save_failed",
+        message: saveResult?.message || saveResult?.error || "No se pudo guardar el token push.",
+      };
+    }
+
+    return { ok: true, token: result.token, server: saveResult };
   } catch (error) {
     console.warn("No se pudo registrar el dispositivo para push", error);
     return { ok: false, reason: "registration_failed", message: error.message };
   }
+}
+
+function buildFirebaseForegroundNotification(payload = {}) {
+  const notification = payload.notification || {};
+  const data = payload.data || {};
+  const title = notification.title || data.title || payload.title || APP_NAME;
+
+  return {
+    title,
+    body: notification.body || data.body || payload.body || DEFAULT_PUSH_BODY,
+    tag: data.tag || notification.tag || payload.tag || `copilot-push-${Date.now()}`,
+    requireInteraction: data.requireInteraction === "true" || payload.requireInteraction === true,
+    data: {
+      type: data.type || payload.type || "push",
+      url: data.url || payload.fcmOptions?.link || getAppUrl(),
+    },
+  };
 }
 
 async function getReadyServiceWorkerRegistration() {

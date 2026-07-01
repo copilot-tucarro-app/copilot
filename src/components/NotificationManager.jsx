@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { getNotificationPreferences, getMsUntilNextReminderTime, runVehicleNotificationCheck } from "../utils/notificationUtils";
+import { getNotificationPreferences, getMsUntilNextReminderTime, runVehicleNotificationCheck, startForegroundPushNotifications } from "../utils/notificationUtils";
 import { getVehicles } from "../utils/storage";
 
 export default function NotificationManager({ user }) {
@@ -8,6 +8,7 @@ export default function NotificationManager({ user }) {
 
     let cancelled = false;
     let timeoutId = 0;
+    startForegroundPushNotifications(user);
 
     async function checkNotifications(force = false) {
       if (cancelled) return;
