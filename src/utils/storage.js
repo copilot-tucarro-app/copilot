@@ -91,16 +91,44 @@ function normalizeVehicle(vehicle) {
     licenseExpiry: normalizeVehicleDate(pickVehicleValue(vehicle, ["licenseExpiry", "licenciaVence"])),
     taxExpiry: normalizeVehicleDate(pickVehicleValue(vehicle, ["taxExpiry", "impuestoVence"])),
     insuranceExpiry: normalizeVehicleDate(pickVehicleValue(vehicle, ["insuranceExpiry", "seguroVence"])),
+    creditExpiry: normalizeVehicleDate(pickVehicleValue(vehicle, ["creditExpiry", "creditoVence", "vehicleCreditExpiry"])),
+    warrantyStartDate: normalizeVehicleDate(pickVehicleValue(vehicle, ["warrantyStartDate", "garantiaInicio"])),
+    warrantyYears: pickVehicleValue(vehicle, ["warrantyYears", "garantiaVigenciaAnios"]) || "",
+    warrantyExpiryKm: pickVehicleValue(vehicle, ["warrantyExpiryKm", "garantiaVenceKm"]) || "",
     soatNoticeDays: pickVehicleValue(vehicle, ["soatNoticeDays", "soatAvisoDias"]) || "30",
     techReviewNoticeDays: pickVehicleValue(vehicle, ["techReviewNoticeDays", "tecnomecanicaAvisoDias", "techReviewAvisoDias"]) || "30",
     licenseNoticeDays: pickVehicleValue(vehicle, ["licenseNoticeDays", "licenciaAvisoDias"]) || "30",
     taxNoticeDays: pickVehicleValue(vehicle, ["taxNoticeDays", "impuestoAvisoDias"]) || "30",
+    insuranceNoticeDays: pickVehicleValue(vehicle, ["insuranceNoticeDays", "seguroAvisoDias"]) || "30",
+    creditNoticeDays: pickVehicleValue(vehicle, ["creditNoticeDays", "creditoAvisoDias"]) || "30",
+    warrantyNoticeDays: pickVehicleValue(vehicle, ["warrantyNoticeDays", "garantiaAvisoDias"]) || "30",
     lastEngineOilKm: pickVehicleValue(vehicle, ["lastEngineOilKm", "ultimoAceiteMotorKm"]) || "",
     nextEngineOilKm: pickVehicleValue(vehicle, ["nextEngineOilKm", "proximoAceiteMotorKm"]) || "",
     lastGearboxOilKm: pickVehicleValue(vehicle, ["lastGearboxOilKm", "ultimoAceiteCajaKm"]) || "",
     nextGearboxOilKm: pickVehicleValue(vehicle, ["nextGearboxOilKm", "proximoAceiteCajaKm"]) || "",
     maintenanceNotes: pickVehicleValue(vehicle, ["maintenanceNotes", "observaciones"]) || "",
+    notificationContacts: normalizeNotificationContacts(pickVehicleValue(vehicle, ["notificationContacts", "contactosNotificacion"])),
   };
+}
+
+function normalizeNotificationContacts(value) {
+  let contacts = value;
+
+  if (typeof value === "string") {
+    try {
+      contacts = JSON.parse(value);
+    } catch {
+      contacts = [];
+    }
+  }
+
+  return (Array.isArray(contacts) ? contacts : [])
+    .slice(0, 2)
+    .map((contact) => ({
+      name: String(contact?.name || "").trim(),
+      email: String(contact?.email || "").trim().toLowerCase(),
+      notificationTypes: Array.isArray(contact?.notificationTypes) ? contact.notificationTypes.map((type) => String(type || "").trim()).filter(Boolean) : [],
+    }));
 }
 
 function pickVehicleValue(vehicle, keys) {

@@ -11,13 +11,17 @@
   Gauge,
   IdCard,
   ImagePlus,
+  ListChecks,
+  Mail,
   Loader2,
   MapPin,
   Pencil,
   Plus,
   Save,
+  Send,
   ShieldCheck,
   Star,
+  UsersRound,
   Trash2,
   Wrench,
   X,
@@ -25,7 +29,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Header from "../components/Header";
 import { cityOptions, fuelOptions, vehicleTypeOptions } from "../data/mockData";
-import { getCachedVehicleByUser, refreshVehicleByUser, saveVehicleToSheet } from "../services/api";
+import { getCachedVehicleByUser, refreshVehicleByUser, saveVehicleToSheet, sendNotificationContactsTestEmail } from "../services/api";
 import { checkPicoPlaca, getCachedPicoPlacaRulesPayload } from "../services/picoPlacaService";
 import { buildDocumentAlerts, buildMaintenanceAlerts } from "../utils/alertUtils";
 import { daysUntil, formatShortDate } from "../utils/dateUtils";
@@ -48,15 +52,23 @@ const defaultVehicle = {
   techReviewExpiry: "",
   licenseExpiry: "",
   taxExpiry: "",
+  taxNoticeDays: "15",
+  insuranceNoticeDays: "15",
+  creditExpiry: "",
+  creditNoticeDays: "15",
+  warrantyStartDate: "",
+  warrantyYears: "",
+  warrantyExpiryKm: "",
+  warrantyNoticeDays: "15",
   soatNoticeDays: "15",
   techReviewNoticeDays: "15",
   licenseNoticeDays: "15",
-  taxNoticeDays: "15",
   lastEngineOilKm: "",
   nextEngineOilKm: "",
   lastGearboxOilKm: "",
   nextGearboxOilKm: "",
   maintenanceNotes: "",
+  notificationContacts: [],
   vehiclePhotoDataUrl: "",
   vehiclePhotoUpdatedAt: "",
   principal: false,
@@ -76,6 +88,7 @@ const tabs = [
   { id: "data", label: "Datos del vehiculo", icon: IdCard },
   { id: "documents", label: "Vencimientos y avisos", icon: CalendarDays },
   { id: "maintenance", label: "Mantenimiento", icon: Wrench },
+  { id: "contacts", label: "Contactos", icon: UsersRound },
 ];
 
 const documentRows = [
@@ -107,6 +120,27 @@ const documentRows = [
     icon: BadgeCheck,
     tone: "blue",
   },
+  {
+    label: "Seguro vehicular",
+    dateField: "insuranceExpiry",
+    noticeField: "insuranceNoticeDays",
+    icon: ShieldCheck,
+    tone: "green",
+  },
+  {
+    label: "Credito de vehiculo",
+    dateField: "creditExpiry",
+    noticeField: "creditNoticeDays",
+    icon: BadgeCheck,
+    tone: "amber",
+  },
+];
+
+const contactNotificationOptions = [
+  { id: "documents", label: "Vencimientos" },
+  { id: "maintenance", label: "Mantenimiento" },
+  { id: "picoPlaca", label: "Pico y placa" },
+  { id: "news", label: "Novedades" },
 ];
 
 export default function Vehicle({ user, onLogout, onUnsavedChange, onRegisterSave }) {
@@ -118,6 +152,8 @@ export default function Vehicle({ user, onLogout, onUnsavedChange, onRegisterSav
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [syncMessage, setSyncMessage] = useState("");
   const [isVehicleSyncing, setIsVehicleSyncing] = useState(Boolean(user?.email && !getVehicles(user).length));
+  const [isSendingContactTest, setIsSendingContactTest] = useState(false);
+  const [contactTestMessage, setContactTestMessage] = useState("");
   const [openMenuVehicleId, setOpenMenuVehicleId] = useState("");
   const [openMenuPosition, setOpenMenuPosition] = useState(null);
   const [addModalOpen, setAddModalOpen] = useState(false);
@@ -144,16 +180,22 @@ export default function Vehicle({ user, onLogout, onUnsavedChange, onRegisterSav
     const currentVehicles = vehiclesRef.current;
     const currentActiveVehicleId = activeVehicleIdRef.current;
     const now = new Date().toISOString();
+    const activeVehicle = currentVehicles.find((vehicle) => vehicle.id === currentActiveVehicleId) || currentVehicles[0] || null;
+    const normalizedContacts = normalizeNotificationContacts(activeVehicle?.notificationContacts);
     const normalizedVehicles = currentVehicles.map((vehicle) =>
       vehicle.id === currentActiveVehicleId
         ? {
             ...vehicle,
             id: vehicle.id || createId("vehicle"),
             plate: String(vehicle.plate || "").trim().toUpperCase(),
+            notificationContacts: normalizedContacts,
             updatedAt: now,
             guardado: true,
           }
-        : vehicle,
+        : {
+            ...vehicle,
+            notificationContacts: normalizedContacts,
+          },
     );
     const savedVehicles = setVehicles(normalizedVehicles, user, { activeVehicleId: currentActiveVehicleId });
     const savedActiveVehicle = resolveActiveVehicle(savedVehicles, currentActiveVehicleId);
@@ -258,6 +300,54 @@ export default function Vehicle({ user, onLogout, onUnsavedChange, onRegisterSav
     );
     setSaved(false);
     setHasUnsavedChanges(true);
+  }
+
+  function updateNotificationContact(index, field, value) {
+    localMutationVersionRef.current += 1;
+    setVehicleForms((currentVehicles) => {
+      const active = resolveActiveVehicle(currentVehicles, activeVehicleId);
+      const contacts = normalizeNotificationContacts(active?.notificationContacts);
+      const nextContacts = Array.from({ length: 2 }, (_, contactIndex) => contacts[contactIndex] || buildEmptyNotificationContact());
+      nextContacts[index] = {
+        ...nextContacts[index],
+        [field]: value,
+      };
+
+      return currentVehicles.map((vehicle) => ({
+        ...vehicle,
+        notificationContacts: nextContacts,
+        guardado: vehicle.id === activeVehicleId ? false : vehicle.guardado,
+      }));
+    });
+    setSaved(false);
+    setHasUnsavedChanges(true);
+  }
+
+  async function sendContactTestEmails() {
+    const vehicle = resolveActiveVehicle(vehiclesRef.current, activeVehicleIdRef.current);
+    if (!vehicle) return;
+
+    setIsSendingContactTest(true);
+    setContactTestMessage("");
+
+    try {
+      const payloadVehicle = {
+        ...omitLocalOnlyFields(vehicle),
+        notificationContacts: normalizeNotificationContacts(vehicle.notificationContacts),
+      };
+      const result = await sendNotificationContactsTestEmail(payloadVehicle, user);
+
+      if (result?.ok) {
+        setContactTestMessage(`Correo de prueba enviado a ${result.sent || 0} destinatario${result.sent === 1 ? "" : "s"}.`);
+      } else {
+        setContactTestMessage(result?.message || "No se pudo enviar el correo de prueba.");
+      }
+    } catch (error) {
+      console.warn("No se pudo enviar prueba de contactos", error);
+      setContactTestMessage(error.message || "No se pudo enviar el correo de prueba.");
+    } finally {
+      setIsSendingContactTest(false);
+    }
   }
 
   function closeVehicleMenu() {
@@ -470,6 +560,15 @@ export default function Vehicle({ user, onLogout, onUnsavedChange, onRegisterSav
           {activeTab === "data" ? <DataTab vehicle={activeVehicle} onChange={updateActiveVehicleField} /> : null}
           {activeTab === "documents" ? <DocumentsTab vehicle={activeVehicle} onChange={updateActiveVehicleField} /> : null}
           {activeTab === "maintenance" ? <MaintenanceTab vehicle={activeVehicle} onChange={updateActiveVehicleField} /> : null}
+          {activeTab === "contacts" ? (
+            <ContactsTab
+              vehicle={activeVehicle}
+              onChange={updateNotificationContact}
+              onSendTest={sendContactTestEmails}
+              isSendingTest={isSendingContactTest}
+              testMessage={contactTestMessage}
+            />
+          ) : null}
         </section>
 
         {hasUnsavedChanges ? (
@@ -820,7 +919,7 @@ function MenuAction({ icon: Icon, label, onClick, disabled = false, danger = fal
 function VehicleTabs({ activeTab, onChange }) {
   return (
     <div className="overflow-x-auto rounded-[1.5rem] bg-white/95 p-1 shadow-sm ring-1 ring-slate-200">
-      <div className="grid min-w-[34rem] grid-cols-3 gap-1">
+      <div className="grid min-w-[42rem] grid-cols-4 gap-1">
         {tabs.map((tab) => {
           const Icon = tab.icon;
           const active = activeTab === tab.id;
@@ -940,6 +1039,7 @@ function DocumentsTab({ vehicle, onChange }) {
         {documentRows.map((document) => (
           <DocumentCard key={document.dateField} document={document} vehicle={vehicle} onChange={onChange} />
         ))}
+        <WarrantyCard vehicle={vehicle} onChange={onChange} />
         <PicoPreviewCard vehicle={vehicle} />
         <div className="rounded-3xl bg-slate-50 p-4 ring-1 ring-slate-100 sm:col-span-2">
           <div className="flex items-center gap-3">
@@ -951,6 +1051,42 @@ function DocumentsTab({ vehicle, onChange }) {
             <Badge tone="slate">Configurado</Badge>
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function WarrantyCard({ vehicle, onChange }) {
+  const currentMileage = Number(vehicle.currentMileage || 0);
+  const warrantyKm = Number(vehicle.warrantyExpiryKm || 0);
+  const remainingKm = Number.isFinite(currentMileage) && Number.isFinite(warrantyKm) && warrantyKm > 0 ? warrantyKm - currentMileage : null;
+  const status = getWarrantyBadgeMeta(vehicle.warrantyStartDate, vehicle.warrantyYears, remainingKm, Number(vehicle.warrantyNoticeDays || 15));
+
+  return (
+    <div className="rounded-3xl bg-slate-50 p-4 ring-1 ring-slate-100 sm:col-span-2">
+      <div className="mb-3 flex items-start gap-3">
+        <SoftIcon icon={ShieldCheck} tone="purple" />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="font-black text-slate-950">Garantia de fabrica</h3>
+            <span className={`rounded-full px-2.5 py-1 text-xs font-black ring-1 ${status.className}`}>{status.label}</span>
+          </div>
+          <p className="mt-1 text-sm font-semibold text-slate-500">{formatWarrantySummary(vehicle, remainingKm)}</p>
+        </div>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-4">
+        <Field label="Inicio garantia">
+          <input className="input" type="date" value={vehicle.warrantyStartDate || ""} onChange={(event) => onChange("warrantyStartDate", event.target.value)} />
+        </Field>
+        <Field label="Anios vigencia">
+          <input className="input" value={vehicle.warrantyYears || ""} onChange={(event) => onChange("warrantyYears", event.target.value)} placeholder="3" inputMode="numeric" />
+        </Field>
+        <Field label="Vence en km">
+          <input className="input" value={vehicle.warrantyExpiryKm || ""} onChange={(event) => onChange("warrantyExpiryKm", event.target.value)} placeholder="100000" inputMode="numeric" />
+        </Field>
+        <Field label="Avisar antes">
+          <input className="input" value={vehicle.warrantyNoticeDays || ""} onChange={(event) => onChange("warrantyNoticeDays", event.target.value)} placeholder="15" inputMode="numeric" />
+        </Field>
       </div>
     </div>
   );
@@ -1030,6 +1166,97 @@ function MaintenanceTab({ vehicle, onChange }) {
         <Field label="Observaciones" className="sm:col-span-2">
           <textarea className="input min-h-28 resize-none" value={vehicle.maintenanceNotes} onChange={(event) => onChange("maintenanceNotes", event.target.value)} placeholder="Notas de taller, repuestos o pendientes." />
         </Field>
+      </div>
+    </div>
+  );
+}
+
+function ContactsTab({ vehicle, onChange, onSendTest, isSendingTest, testMessage }) {
+  const contacts = normalizeNotificationContacts(vehicle.notificationContacts);
+  const activeContactCount = contacts.filter((contact) => contact.email && contact.notificationTypes.length).length;
+
+  return (
+    <div>
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <SectionTitle title="Contactos de notificacion" detail="El usuario recibe siempre. Agrega hasta 2 contactos adicionales y elige que alertas reciben." noMargin />
+        <button
+          type="button"
+          onClick={onSendTest}
+          disabled={isSendingTest}
+          className="secondary-button w-full justify-center sm:w-auto"
+        >
+          {isSendingTest ? <Loader2 className="animate-spin" size={18} /> : <Send size={18} />}
+          Probar correos
+        </button>
+      </div>
+      <div className="mb-4 rounded-3xl bg-blue-50 p-4 text-blue-950 ring-1 ring-blue-100">
+        <div className="flex items-center gap-3">
+          <SoftIcon icon={Mail} tone="blue" />
+          <div className="min-w-0">
+            <p className="text-sm font-black">Destinatario principal</p>
+            <p className="mt-1 text-sm font-semibold text-blue-900/75">El correo del usuario se mantiene incluido en todas las notificaciones.</p>
+          </div>
+        </div>
+      </div>
+      {testMessage ? <p className="mb-4 rounded-2xl bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-800 ring-1 ring-emerald-100">{testMessage}</p> : null}
+      {!activeContactCount ? (
+        <p className="mb-4 rounded-2xl bg-amber-50 px-4 py-3 text-sm font-bold text-amber-900 ring-1 ring-amber-100">
+          La prueba enviara al usuario. Los contactos adicionales reciben prueba cuando tienen correo y al menos una notificacion seleccionada.
+        </p>
+      ) : null}
+
+      <div className="grid gap-3">
+        {Array.from({ length: 2 }, (_, index) => contacts[index] || buildEmptyNotificationContact()).map((contact, index) => (
+          <NotificationContactCard key={index} contact={contact} index={index} onChange={onChange} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function NotificationContactCard({ contact, index, onChange }) {
+  const selectedTypes = Array.isArray(contact.notificationTypes) ? contact.notificationTypes : [];
+
+  function toggleType(typeId) {
+    const nextTypes = selectedTypes.includes(typeId) ? selectedTypes.filter((item) => item !== typeId) : [...selectedTypes, typeId];
+    onChange(index, "notificationTypes", nextTypes);
+  }
+
+  return (
+    <div className="rounded-3xl bg-slate-50 p-4 ring-1 ring-slate-100">
+      <div className="mb-3 flex items-center gap-3">
+        <SoftIcon icon={UsersRound} tone={index === 0 ? "green" : "amber"} />
+        <div>
+          <h3 className="font-black text-slate-950">Contacto adicional {index + 1}</h3>
+          <p className="mt-1 text-sm font-semibold text-slate-500">Recibe solo las notificaciones seleccionadas.</p>
+        </div>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <Field label="Nombre">
+          <input className="input" value={contact.name || ""} onChange={(event) => onChange(index, "name", event.target.value)} placeholder="Nombre del contacto" />
+        </Field>
+        <Field label="Correo">
+          <input className="input" type="email" value={contact.email || ""} onChange={(event) => onChange(index, "email", event.target.value)} placeholder="correo@ejemplo.com" />
+        </Field>
+      </div>
+      <div className="mt-3">
+        <div className="mb-2 flex items-center gap-2 text-xs font-black uppercase text-slate-500">
+          <ListChecks size={15} />
+          Notificaciones aplicables
+        </div>
+        <div className="grid gap-2 sm:grid-cols-2">
+          {contactNotificationOptions.map((option) => (
+            <label key={option.id} className="flex min-h-12 items-center gap-3 rounded-2xl bg-white px-3 py-2 text-sm font-black text-slate-700 ring-1 ring-slate-200">
+              <input
+                type="checkbox"
+                className="size-4 accent-black"
+                checked={selectedTypes.includes(option.id)}
+                onChange={() => toggleType(option.id)}
+              />
+              <span>{option.label}</span>
+            </label>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -1359,6 +1586,68 @@ function formatRemainingKm(value) {
   if (value === null) return "Ingresa kilometraje";
   if (value < 0) return `Vencido por ${Math.abs(value).toLocaleString("es-CO")} km`;
   return `Faltan ${value.toLocaleString("es-CO")} km`;
+}
+
+function buildEmptyNotificationContact() {
+  return {
+    name: "",
+    email: "",
+    notificationTypes: [],
+  };
+}
+
+function normalizeNotificationContacts(contacts) {
+  const normalizedContacts = (Array.isArray(contacts) ? contacts : [])
+    .slice(0, 2)
+    .map((contact) => ({
+      name: String(contact?.name || "").trim(),
+      email: String(contact?.email || "").trim().toLowerCase(),
+      notificationTypes: Array.isArray(contact?.notificationTypes)
+        ? contact.notificationTypes.filter((type) => contactNotificationOptions.some((option) => option.id === type))
+        : [],
+    }));
+
+  while (normalizedContacts.length < 2) {
+    normalizedContacts.push(buildEmptyNotificationContact());
+  }
+
+  return normalizedContacts;
+}
+
+function getWarrantyExpiryDate(startDate, years) {
+  const parsedYears = Number(years);
+  if (!startDate || !Number.isFinite(parsedYears) || parsedYears <= 0) return "";
+
+  const date = new Date(`${startDate}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return "";
+
+  date.setFullYear(date.getFullYear() + parsedYears);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function getWarrantyBadgeMeta(startDate, years, remainingKm, noticeDays) {
+  const expiryDate = getWarrantyExpiryDate(startDate, years);
+  const dateStatus = getDateBadgeMeta(daysUntil(expiryDate), noticeDays);
+
+  if (remainingKm !== null && remainingKm <= 0) {
+    return { label: "Vencida por km", className: "bg-red-50 text-red-700 ring-red-100" };
+  }
+
+  if (remainingKm !== null && remainingKm <= 500) {
+    return { label: "Proxima por km", className: "bg-amber-50 text-amber-700 ring-amber-100" };
+  }
+
+  return dateStatus;
+}
+
+function formatWarrantySummary(vehicle, remainingKm) {
+  const expiryDate = getWarrantyExpiryDate(vehicle.warrantyStartDate, vehicle.warrantyYears);
+  const dateText = expiryDate ? `vence ${formatShortDate(expiryDate)}` : "fecha pendiente";
+  const kmText = remainingKm === null ? "km pendiente" : `${Math.max(remainingKm, 0).toLocaleString("es-CO")} km restantes`;
+  return `${dateText} - ${kmText}`;
 }
 
 function omitLocalOnlyFields(vehicle) {

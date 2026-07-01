@@ -5,6 +5,8 @@ const DOCUMENT_FIELDS = [
   { key: "techReviewExpiry", noticeKey: "techReviewNoticeDays", label: "Tecnomecanica" },
   { key: "licenseExpiry", noticeKey: "licenseNoticeDays", label: "Licencia" },
   { key: "taxExpiry", noticeKey: "taxNoticeDays", label: "Impuesto vehicular" },
+  { key: "insuranceExpiry", noticeKey: "insuranceNoticeDays", label: "Seguro vehicular" },
+  { key: "creditExpiry", noticeKey: "creditNoticeDays", label: "Credito de vehiculo" },
 ];
 
 export function buildDocumentAlerts(vehicle) {
@@ -21,7 +23,7 @@ export function buildDocumentAlerts(vehicle) {
       vehicle,
       ...getDateStatus(vehicle[item.key], noticeDays),
     };
-  });
+  }).concat(buildWarrantyDateAlert(vehicle));
 }
 
 export function buildMaintenanceAlerts(vehicle) {
@@ -30,6 +32,7 @@ export function buildMaintenanceAlerts(vehicle) {
   const maintenanceItems = [
     { key: "nextEngineOilKm", label: "Cambio de aceite motor" },
     { key: "nextGearboxOilKm", label: "Cambio de aceite de caja" },
+    { key: "warrantyExpiryKm", label: "Garantia de fabrica por kilometraje" },
   ];
 
   return maintenanceItems.map((item) => {
@@ -119,6 +122,41 @@ function buildVehicleHomePriorityAlerts(vehicle) {
     }));
 
   return [...documentAlerts, ...maintenanceAlerts];
+}
+
+function buildWarrantyDateAlert(vehicle) {
+  if (!vehicle?.warrantyStartDate || !vehicle?.warrantyYears) return [];
+
+  const expiryDate = getWarrantyExpiryDate(vehicle.warrantyStartDate, vehicle.warrantyYears);
+  if (!expiryDate) return [];
+
+  const noticeDays = Number(vehicle.warrantyNoticeDays || 30);
+  return [
+    {
+      id: `${vehicle.id || vehicle.plate}-warrantyDate`,
+      type: "Documento",
+      title: "Garantia de fabrica",
+      value: expiryDate,
+      noticeDays,
+      vehicle,
+      ...getDateStatus(expiryDate, noticeDays),
+    },
+  ];
+}
+
+function getWarrantyExpiryDate(startDate, years) {
+  const parsedYears = Number(years);
+  if (!startDate || !Number.isFinite(parsedYears) || parsedYears <= 0) return "";
+
+  const date = new Date(`${startDate}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return "";
+
+  date.setFullYear(date.getFullYear() + parsedYears);
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-");
 }
 
 function normalizeVehiclesInput(vehicleOrVehicles) {

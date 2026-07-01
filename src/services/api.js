@@ -361,6 +361,10 @@ export async function saveVehicleToSheet(vehicle, user) {
   return result;
 }
 
+export async function sendNotificationContactsTestEmail(vehicle, user) {
+  return postFormToAppsScript("sendNotificationContactsTestEmail", { vehicle, user }, { timeoutMs: 30000 });
+}
+
 export async function savePushSubscription(subscription) {
   return sendToAppsScript("savePushSubscription", { subscription });
 }
