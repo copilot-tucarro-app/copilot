@@ -8,13 +8,11 @@
   ChevronRight,
   CirclePlus,
   EllipsisVertical,
-  Gauge,
   IdCard,
   ImagePlus,
   ListChecks,
   Mail,
   Loader2,
-  MapPin,
   Pencil,
   Plus,
   Save,
@@ -632,11 +630,6 @@ function HeroVehicleCard({ vehicle, saved, onPhotoUpload, onRemovePhoto }) {
             <p className="mt-2 text-base font-semibold text-white/85">{vehicle.year ? `Modelo ${vehicle.year}` : "Modelo pendiente"}</p>
           </div>
 
-          <div className="mt-5 grid gap-3 min-[520px]:grid-cols-2">
-            <HeroMetric icon={MapPin} label="Ciudad" value={polishSpanishText(vehicle.city || "Ciudad pendiente")} />
-            <HeroMetric icon={Gauge} label="Kilometraje" value={formatMileage(vehicle.currentMileage)} />
-          </div>
-
           <div className="mt-4 flex flex-wrap gap-2">
             <label className="inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-2xl bg-white px-4 py-2 text-sm font-black text-black shadow-sm transition hover:-translate-y-0.5">
               {vehicle.vehiclePhotoDataUrl ? <Camera size={18} /> : <ImagePlus size={18} />}
@@ -657,20 +650,6 @@ function HeroVehicleCard({ vehicle, saved, onPhotoUpload, onRemovePhoto }) {
         </div>
       </div>
     </section>
-  );
-}
-
-function HeroMetric({ icon: Icon, label, value }) {
-  return (
-    <div className="flex min-w-0 items-center gap-3 rounded-3xl bg-black/40 p-3 text-white ring-1 ring-white/15 backdrop-blur-md">
-      <div className="grid size-12 shrink-0 place-items-center rounded-2xl bg-white text-black">
-        <Icon size={21} />
-      </div>
-      <div className="min-w-0">
-        <p className="text-xs font-semibold text-white/75">{label}</p>
-        <p className="truncate text-lg font-black leading-tight">{value}</p>
-      </div>
-    </div>
   );
 }
 
@@ -1535,12 +1514,6 @@ function getVehicleImage(vehicle) {
 
 function getVehicleTitle(vehicle) {
   return [vehicle.brand || "Marca", vehicle.model || "modelo"].join(" ").trim();
-}
-
-function formatMileage(value) {
-  const mileage = Number(value);
-  if (!value || !Number.isFinite(mileage)) return "Kilometraje pendiente";
-  return `${mileage.toLocaleString("es-CO")} km`;
 }
 
 function getValueToneClass(tone) {
