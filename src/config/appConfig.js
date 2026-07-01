@@ -3,7 +3,7 @@ import compactLogoAltUrl from "../../media/cblack.png";
 import loginLogoUrl from "../../media/Copilot360.png";
 
 export const APP_NAME = "copilot360";
-export const APP_BUILD_VERSION = "2026.06.05.8";
+export const APP_BUILD_VERSION = "2026.07.01.1";
 export const APP_BRANDING_VERSION = "copilot360-brand-20260605";
 export const APP_ICON_URL = compactLogoUrl;
 export const APP_ICON_INVERSE_URL = compactLogoUrl;
